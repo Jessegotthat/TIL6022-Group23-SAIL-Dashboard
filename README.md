@@ -1,2 +1,4 @@
 # TIL6022-Group23-SAIL-Dashboard
 Group Assignment Repository
+
+Brief description: SAIL Amsterdam is one of the largest maritime events, traditionally held once every five years. However, due to the 2020 pandemic, the event will return in 2025 after a ten-year gap. This long-awaited edition is expected to attract not only visitors from across the Netherlands but also from all over Europe. With such large crowds anticipated, effective crowd management becomes crucial for the safety and smooth operation of the event. The aim of this project is to monitor and forecast short-term crowd flows in order to reduce safety risks and prevent undesirable incidents. To achieve this, an interactive dashboard with a map-based interface will be developed to support stakeholders in managing real-time and predicted crowd movements.
