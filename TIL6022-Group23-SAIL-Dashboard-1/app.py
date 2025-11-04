@@ -402,6 +402,95 @@ if st.session_state.page == "details":
     st.stop()  # make sure the map below does not run on this page
 # ====================================================================
 
+# ===================== TIME-LAPSE PAGE (animated map) ======================
+if st.session_state.page == "timelapse":
+    import plotly.express as px
+
+    st.header("▶️ Time-lapse — People over Time")
+
+    # Controls
+    use_current_range = st.checkbox("Use current time range only", value=False,
+                                    help="If off, animates the full selected day.")
+    # Build the time window for the animation
+    if use_current_range:
+        ani_start, ani_end = selected_start, selected_end
+    else:
+        # animate the full selected day
+        day_start = pd.Timestamp.combine(selected_date, pd.Timestamp.min.time())
+        day_end   = pd.Timestamp.combine(selected_date, pd.Timestamp.max.time())
+        # clip to data availability on that day
+        mask_day = (flow_long["_t"].dt.date == selected_date)
+        if mask_day.any():
+            day_times = flow_long.loc[mask_day, "_t"].sort_values()
+            ani_start = max(day_start, day_times.min())
+            ani_end   = min(day_end,   day_times.max())
+        else:
+            ani_start, ani_end = selected_start, selected_end
+
+    # Prepare frame data: sum per sensor per timestamp, then join coords
+    df_frames = (
+        flow_long.loc[(flow_long["_t"] >= ani_start) & (flow_long["_t"] <= ani_end),
+                      ["_t", "join_key", "value"]]
+                  .groupby(["_t", "join_key"], as_index=False)["value"].sum()
+                  .merge(sensors[["join_key", "location_name", "_lat", "_lon"]],
+                         on="join_key", how="inner")
+    )
+
+    if df_frames.empty:
+        st.warning("No data available for the selected period.")
+        st.stop()
+
+    # Nicely formatted frame labels (string), keeps animation snappy
+    df_frames["_t_str"] = df_frames["_t"].dt.strftime("%H:%M")
+
+    # Size scale for bubbles (avoid zero-size)
+    vmin, vmax = float(df_frames["value"].min()), float(df_frames["value"].max())
+    size_ref = max(1.0, vmax / 30.0)  # tune bubble sizing
+    df_frames["size"] = df_frames["value"].clip(lower=0.1) / size_ref
+
+    st.caption(
+        f"Animating {ani_start:%Y-%m-%d %H:%M} → {ani_end:%H:%M} "
+        f"({df_frames['_t'].nunique()} frames)"
+    )
+
+    # Animated map (no token needed with OSM style)
+    fig_anim = px.scatter_mapbox(
+        df_frames,
+        lat="_lat", lon="_lon",
+        size="size", size_max=40,
+        color="value", color_continuous_scale="Viridis",
+        hover_name="location_name",
+        hover_data={"value": True, "_t_str": True, "_lat": False, "_lon": False, "size": False},
+        animation_frame="_t_str",
+        zoom=12, height=650,
+        title="People pattern over time"
+    )
+    fig_anim.update_layout(
+        mapbox_style="open-street-map",
+        margin=dict(l=10, r=10, t=60, b=10),
+        coloraxis_colorbar=dict(title="Count"),
+        updatemenus=[{
+            "type": "buttons",
+            "showactive": False,
+            "buttons": [
+                {"label": "▶ Play", "method": "animate", "args": [None, {"frame": {"duration": 400, "redraw": False}, "fromcurrent": True, "mode": "immediate"}]},
+                {"label": "⏸ Pause", "method": "animate", "args": [[None], {"mode": "immediate", "frame": {"duration": 0, "redraw": False}}]}
+            ]
+        }]
+    )
+    st.plotly_chart(fig_anim, use_container_width=True)
+
+    # Optional: export the frame data driving the animation
+    with st.expander("Export frame data (CSV)"):
+        st.download_button(
+            "Download CSV",
+            data=df_frames.to_csv(index=False).encode("utf-8"),
+            file_name=f"timelapse_{selected_date:%Y%m%d}.csv",
+            mime="text/csv"
+        )
+
+    st.stop()
+# ====================================================================
 
 # ====================================================================
 
