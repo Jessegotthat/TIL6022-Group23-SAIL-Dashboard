@@ -245,8 +245,18 @@ with c1:
         format_func=lambda d: d.strftime("%Y-%m-%d"),
     )
 
+    use_whole_event = st.checkbox(
+        "Show whole event (all dates)",
+        value=False,
+        help="Use all data from all days instead of a single date."
+    )
+
 # ---- Time slider (time-only label; values are naive datetimes) ----
-day_mask  = flow_long["_t"].dt.date == selected_date
+if use_whole_event:
+    day_mask = flow_long["_t"].notna()  
+else:
+    day_mask = flow_long["_t"].dt.date == selected_date
+
 day_times = pd.to_datetime(flow_long.loc[day_mask, "_t"], errors="coerce")
 
 if pd.api.types.is_datetime64tz_dtype(day_times):
@@ -265,6 +275,7 @@ t_max = pd.Timestamp(day_times[-1]).to_pydatetime()
 if t_min == t_max:
     t_min = t_min - timedelta(minutes=3)
     t_max = t_max + timedelta(minutes=3)
+
 
 # Default: latest non-zero on this date if available, else mid time
 if auto_dt.date() == selected_date:
@@ -293,10 +304,25 @@ with c2:
 selected_dt = selected_start + (selected_end - selected_start) / 2
 window_minutes = int(((selected_end - selected_start).total_seconds() / 60) / 2)
 
-st.caption(
-    f"Selected range: {selected_start:%Y-%m-%d %H:%M} → "
-    f"{selected_end:%H:%M} (midpoint {selected_dt:%H:%M}, ±{window_minutes} min)"
-)
+# ---- Caption + optional WHOLE-EVENT override (put this before Aggregate + join) ----
+if use_whole_event:
+    # Use the full dataset span
+    selected_start = pd.Timestamp(flow_long["_t"].min()).to_pydatetime()
+    selected_end   = pd.Timestamp(flow_long["_t"].max()).to_pydatetime()
+
+    # Recompute midpoint + half-width so downstream code (agg_window, tooltips) still works
+    selected_dt = selected_start + (selected_end - selected_start) / 2
+    window_minutes = int(((selected_end - selected_start).total_seconds() / 60) / 2)
+
+    st.caption(
+        f"Whole event: {selected_start:%Y-%m-%d %H:%M} → "
+        f"{selected_end:%H:%M} (midpoint {selected_dt:%H:%M}, ±{window_minutes} min)"
+    )
+else:
+    st.caption(
+        f"Selected range: {selected_start:%Y-%m-%d %H:%M} → "
+        f"{selected_end:%H:%M} (midpoint {selected_dt:%H:%M}, ±{window_minutes} min)"
+    )
 
 
 # ---- Aggregate + join ----
