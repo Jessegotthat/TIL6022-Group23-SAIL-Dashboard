@@ -1,4 +1,4 @@
-# app.py
+# app.py  — your original map app + a safe extra page (Sensor Details)
 
 import re
 from pathlib import Path
@@ -10,7 +10,6 @@ import streamlit as st
 import folium
 from folium.plugins import HeatMap
 
-
 # ---------------- CONFIG ----------------
 BASE_DIR = Path(__file__).parent
 SENSORS_XLSX = BASE_DIR / "Sensor Location Data.xlsx"
@@ -20,6 +19,11 @@ DEFAULT_WINDOW_MIN = 15
 
 st.set_page_config(page_title="SAIL Sensors — Per-Sensor Counts & Heatmap", layout="wide")
 
+# ---------------- SIMPLE PAGE ROUTER (ADD) ----------------
+# This does NOT change your logic; it just lets the user pick which page to view.
+if "page" not in st.session_state:
+    st.session_state.page = "map"
+# ---------------------------------------------------------
 
 # ---------------- HELPERS ----------------
 def _norm(s: str) -> str:
@@ -29,7 +33,6 @@ def _norm(s: str) -> str:
     s = re.sub(r'[-_ ]+[a-z]$', '', s)     # drop trailing "-a" / "-b"
     s = re.sub(r'[^a-z0-9]', '', s)        # keep only a-z0-9
     return s
-
 
 # ---------------- LOADERS ----------------
 @st.cache_data(show_spinner=False)
@@ -65,7 +68,6 @@ def load_sensors(path: Path) -> pd.DataFrame:
     out = out.dropna(subset=["_lat", "_lon"])
     out["join_key"] = out["code"].apply(_norm)
     return out
-
 
 @st.cache_data(show_spinner=False)
 def load_flow_wide_to_long(path: Path) -> pd.DataFrame:
@@ -131,7 +133,6 @@ def load_flow_wide_to_long(path: Path) -> pd.DataFrame:
 
     return long_df
 
-
 def agg_window(long_df: pd.DataFrame, selected_dt: datetime, window_minutes: int) -> pd.DataFrame:
     """Sum values per join_key within ±window minutes around selected_dt."""
     start = selected_dt - timedelta(minutes=window_minutes)
@@ -143,7 +144,6 @@ def agg_window(long_df: pd.DataFrame, selected_dt: datetime, window_minutes: int
     agg.rename(columns={"value": "value_sum"}, inplace=True)
     return agg
 
-
 def latest_nonzero_dt(long_df: pd.DataFrame) -> datetime:
     totals = long_df.groupby("_t", as_index=False)["value"].sum()
     nz = totals.loc[totals["value"] > 0]
@@ -151,19 +151,16 @@ def latest_nonzero_dt(long_df: pd.DataFrame) -> datetime:
         return nz["_t"].max().to_pydatetime()
     return long_df["_t"].min().to_pydatetime()
 
-
 # ---------------- MAP ----------------
 def make_base_map(sensors_df: pd.DataFrame) -> folium.Map:
     center = [sensors_df["_lat"].mean(), sensors_df["_lon"].mean()] if not sensors_df.empty else CITY_CENTER
     return folium.Map(location=center, zoom_start=13, tiles="cartodbpositron")
-
 
 def _bubble_color(count: float) -> str:
     if count >= 200: return "#E74C3C"  # red
     if count >=  80: return "#F1C40F"  # amber
     if count >    0: return "#7DCEA0"  # green
     return "#95A5A6"                   # gray
-
 
 def add_bubbles(m: folium.Map, df: pd.DataFrame, selected_dt: datetime, window_minutes: int) -> None:
     if df.empty:
@@ -190,16 +187,13 @@ def add_bubbles(m: folium.Map, df: pd.DataFrame, selected_dt: datetime, window_m
                      f"<b>Time:</b> {selected_dt:%Y-%m-%d %H:%M} (±{window_minutes}m)")
         ).add_to(m)
 
-
 def add_heatmap(m: folium.Map, df: pd.DataFrame, radius_px: int) -> None:
     pts = [[float(r["_lat"]), float(r["_lon"]), float(r["count"])] for _, r in df.iterrows() if r["count"] > 0]
     if pts:
         HeatMap(pts, radius=radius_px, blur=radius_px*0.6, max_zoom=16).add_to(m)
 
-
 # ---------------- UI ----------------
 st.title("🌊 SAIL Sensors — Per-Sensor Counts & Heatmap")
-tab_map, tab_detail = st.tabs(["🗺️ Map", "📈 Sensor Details"])
 
 with st.sidebar:
     st.header("📁 Files")
@@ -208,6 +202,11 @@ with st.sidebar:
     viz_mode       = st.radio("Visualization", ["Bubbles", "Heatmap", "Both"], index=0)
     heat_radius_px = st.slider("Heatmap radius (px)", 10, 100, 48, 2)
     window_minutes = st.slider("± minutes around time (smoothing)", 0, 60, DEFAULT_WINDOW_MIN, 1)
+
+    st.markdown("---")
+    page_choice = st.radio("Page", ["🗺️ Map", "📈 Sensor Details"],
+                           index=0 if st.session_state.page == "map" else 1)
+    st.session_state.page = "map" if page_choice.startswith("🗺️") else "details"
 
 # Load data
 try:
@@ -282,60 +281,18 @@ flow_agg   = agg_window(flow_long, selected_dt, window_minutes)
 bubbles_df = sensors.merge(flow_agg, on="join_key", how="left")
 bubbles_df["count"] = bubbles_df["value_sum"].fillna(0).astype(int)
 
-# ---- Map ----
-with tab_map:
-    # ---- Map ----
-    m = make_base_map(sensors)
-    if viz_mode in ("Heatmap", "Both"):
-        add_heatmap(m, bubbles_df, radius_px=heat_radius_px)
-    if viz_mode in ("Bubbles", "Both"):
-        add_bubbles(m, bubbles_df, selected_dt, window_minutes)
-
-    st.components.v1.html(m.get_root().render(), height=650)
-
-    # ---- KPIs ----
-    total_people      = int(bubbles_df["count"].sum())
-    sensors_with_data = int((bubbles_df["count"] > 0).sum())
-    k1, k2, k3 = st.columns(3)
-    k1.metric("📍 Sensors plotted", f"{len(sensors)}")
-    k2.metric("📊 Sensors w/ data", f"{sensors_with_data}")
-    k3.metric("👥 Total people (window)", f"{total_people}")
-
-# ============================================================
-# SECOND PAGE (Sensor Details) – added below existing map code
-# ============================================================
-
-st.markdown("---")  # divider
-st.header("📈 Sensor Details")
-
-# Tabs for the two pages (Map + Details)
-tab_map, tab_detail = st.tabs(["🗺️ Map", "📈 Sensor Details"])
-
-with tab_map:
-    # ---- Map ----
-    m = make_base_map(sensors)
-    if viz_mode in ("Heatmap", "Both"):
-        add_heatmap(m, bubbles_df, radius_px=heat_radius_px)
-    if viz_mode in ("Bubbles", "Both"):
-        add_bubbles(m, bubbles_df, selected_dt, window_minutes)
-
-    st.components.v1.html(m.get_root().render(), height=650)
-
-    # ---- KPIs ----
-    total_people      = int(bubbles_df["count"].sum())
-    sensors_with_data = int((bubbles_df["count"] > 0).sum())
-    k1, k2, k3 = st.columns(3)
-    k1.metric("📍 Sensors plotted", f"{len(sensors)}")
-    k2.metric("📊 Sensors w/ data", f"{sensors_with_data}")
-    k3.metric("👥 Total people (window)", f"{total_people}")
-
-with tab_detail:
+# ===================== NEW: SENSOR DETAILS PAGE ======================
+# If user picked the details page, render it now and stop before map.
+if st.session_state.page == "details":
     import plotly.express as px
 
     st.header("📈 Sensor Details")
     st.subheader("Trend by Location")
 
-    # Location list from your sensors metadata
+    if "location_name" not in sensors.columns:
+        st.error("Column 'location_name' not found in sensors dataframe.")
+        st.stop()
+
     locations = sensors["location_name"].dropna().sort_values().unique().tolist()
     if not locations:
         st.warning("No locations available in sensors metadata.")
@@ -348,25 +305,24 @@ with tab_detail:
         help="This list comes from the sensors Excel file (Locatienaam)."
     )
 
-    # sensor(s) for that location
+    # Sensor(s) for that location → join_keys
     loc_keys = sensors.loc[sensors["location_name"] == location, "join_key"].tolist()
 
-    # time series from your already-loaded flow_long
+    # Pull time series from already-loaded flow_long
     detail_df = flow_long.loc[flow_long["join_key"].isin(loc_keys), ["_t", "value"]].copy()
     if detail_df.empty:
         st.warning("No data found for this location in the flow file.")
         st.stop()
 
-    # aggregate by timestamp (sum if multiple sensors share a location)
+    # Aggregate by timestamp (sum if multiple sensors share a location)
     detail_agg = (
         detail_df.groupby("_t", as_index=False)["value"].sum()
                  .sort_values("_t")
     )
 
-    # plot
+    # Plot
     fig = px.line(
-        detail_agg,
-        x="_t", y="value",
+        detail_agg, x="_t", y="value",
         labels={"_t": "Time", "value": "Flow Count"},
         title=f"{location} — People over Time"
     )
@@ -378,3 +334,23 @@ with tab_detail:
         f"from {detail_agg['_t'].min():%Y-%m-%d %H:%M} "
         f"to {detail_agg['_t'].max():%Y-%m-%d %H:%M}."
     )
+
+    st.stop()  # <- important: do not run the map below on the details page
+# ====================================================================
+
+# ---- Map (UNCHANGED) ----
+m = make_base_map(sensors)
+if viz_mode in ("Heatmap", "Both"):
+    add_heatmap(m, bubbles_df, radius_px=heat_radius_px)
+if viz_mode in ("Bubbles", "Both"):
+    add_bubbles(m, bubbles_df, selected_dt, window_minutes)
+
+st.components.v1.html(m.get_root().render(), height=650)
+
+# ---- KPIs (UNCHANGED) ----
+total_people      = int(bubbles_df["count"].sum())
+sensors_with_data = int((bubbles_df["count"] > 0).sum())
+k1, k2, k3 = st.columns(3)
+k1.metric("📍 Sensors plotted", f"{len(sensors)}")
+k2.metric("📊 Sensors w/ data", f"{sensors_with_data}")
+k3.metric("👥 Total people (window)", f"{total_people}")
