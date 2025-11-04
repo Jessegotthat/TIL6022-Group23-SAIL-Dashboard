@@ -250,6 +250,8 @@ with c1:
         value=False,
         help="Use all data from all days instead of a single date."
     )
+    st.session_state["use_whole_event"] = use_whole_event
+
 
 # ---- Time slider (time-only label; values are naive datetimes) ----
 if use_whole_event:
@@ -336,6 +338,9 @@ if st.session_state.page == "details":
 
     st.header("📈 Sensor Details")
     st.subheader("Trend by Location")
+# Check if the "whole event" mode is active (carried from the map page)
+    use_whole_event = st.session_state.get("use_whole_event", False)
+
 
     if "location_name" not in sensors.columns:
         st.error("Column 'location_name' not found in sensors dataframe.")
@@ -363,11 +368,11 @@ if st.session_state.page == "details":
         st.stop()
 
     # Filter by current time range (if available)
-    try:
+    if use_whole_event:
+        _start, _end = flow_long["_t"].min(), flow_long["_t"].max()
+    else:
         _start, _end = selected_start, selected_end
-    except NameError:
-        _start, _end = detail_df["_t"].min(), detail_df["_t"].max()
-
+        
     detail_df = detail_df[(detail_df["_t"] >= _start) & (detail_df["_t"] <= _end)]
 
     # Aggregate by timestamp (sum if multiple sensors share a location)
