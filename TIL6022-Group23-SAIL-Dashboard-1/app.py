@@ -342,13 +342,48 @@ if st.session_state.page == "details":
     fig.update_layout(height=450, margin=dict(l=10, r=10, b=10, t=50))
     st.plotly_chart(fig, use_container_width=True)
 
-    st.caption(
-        f"Showing data for **{location}** "
-        f"from {detail_agg['_t'].min():%Y-%m-%d %H:%M} "
-        f"to {detail_agg['_t'].max():%Y-%m-%d %H:%M}."
-    )
+    fig.update_layout(height=450, margin=dict(l=10, r=10, b=10, t=50))
+st.plotly_chart(fig, use_container_width=True)
 
-    st.stop()  # <- important: do not run the map below on the details page
+# ---- KPI box below chart ----
+import streamlit.components.v1 as components
+
+delta_val = now_val - avg24
+delta_color = "#2ECC71" if delta_val >= 0 else "#E74C3C"
+
+kpi_html = f"""
+<div style="
+    display:flex;flex-direction:column;align-items:flex-start;
+    margin-top:1.5rem;
+    font-family: 'Inter', sans-serif;
+">
+  <div style="font-size:2.2rem;font-weight:600;color:white;">
+    {now_val:,.2f}
+  </div>
+  <div style="
+      color:{delta_color};
+      background-color:{delta_color}20;
+      padding:0.25rem 0.6rem;
+      border-radius:8px;
+      font-size:0.9rem;
+      font-weight:500;
+      margin-top:0.3rem;
+  ">
+    {'▲' if delta_val>=0 else '▼'} {delta_val:,.2f} vs 24 h avg
+  </div>
+</div>
+"""
+
+components.html(kpi_html, height=100)
+
+st.caption(
+    f"Showing data for **{location}** "
+    f"from {detail_agg['_t'].min():%Y-%m-%d %H:%M} "
+    f"to {detail_agg['_t'].max():%Y-%m-%d %H:%M}."
+)
+
+st.stop()  # <- keep this here
+
 # ====================================================================
 
 # ---- Map (UNCHANGED) ----
