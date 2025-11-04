@@ -297,3 +297,73 @@ k1, k2, k3 = st.columns(3)
 k1.metric("📍 Sensors plotted", f"{len(sensors)}")
 k2.metric("📊 Sensors w/ data", f"{sensors_with_data}")
 k3.metric("👥 Total people (window)", f"{total_people}")
+
+# ============================================================
+# SECOND PAGE (Sensor Details) – added below existing map code
+# ============================================================
+
+st.markdown("---")  # divider
+st.header("📈 Sensor Details")
+
+# Tabs for the two pages (Map + Details)
+tab_map, tab_detail = st.tabs(["🗺️ Map", "📈 Sensor Details"])
+
+with tab_map:
+    # keep your existing map and KPI content inside this block
+    m = make_base_map(sensors)
+    if viz_mode in ("Heatmap", "Both"):
+        add_heatmap(m, bubbles_df, radius_px=heat_radius_px)
+    if viz_mode in ("Bubbles", "Both"):
+        add_bubbles(m, bubbles_df, selected_dt, window_minutes)
+    st.components.v1.html(m.get_root().render(), height=650)
+
+    total_people      = int(bubbles_df["count"].sum())
+    sensors_with_data = int((bubbles_df["count"] > 0).sum())
+    k1, k2, k3 = st.columns(3)
+    k1.metric("📍 Sensors plotted", f"{len(sensors)}")
+    k2.metric("📊 Sensors w/ data", f"{sensors_with_data}")
+    k3.metric("👥 Total people (window)", f"{total_people}")
+
+with tab_detail:
+    import plotly.express as px
+
+    st.subheader("Trend by Location")
+
+    # Use location names from your 'sensors' DataFrame
+    location = st.selectbox(
+        "Choose location",
+        options=sensors["location_name"].unique(),
+        index=0,
+        help="Select a location to see its sensor trend"
+    )
+
+    # Match the selected location’s sensor join_keys
+    loc_keys = sensors.loc[sensors["location_name"] == location, "join_key"].tolist()
+    detail_df = flow_long[flow_long["join_key"].isin(loc_keys)].copy()
+
+    if detail_df.empty:
+        st.warning("No data found for this location.")
+    else:
+        # Summarize counts by timestamp
+        detail_agg = (
+            detail_df.groupby("_t", as_index=False)["value"].sum()
+            .sort_values("_t")
+        )
+
+        # Line chart
+        fig = px.line(
+            detail_agg,
+            x="_t",
+            y="value",
+            title=f"{location} — People over Time",
+            labels={"_t": "Time", "value": "Flow Count"},
+        )
+        fig.update_layout(height=450, margin=dict(l=10, r=10, b=10, t=50))
+        st.plotly_chart(fig, use_container_width=True)
+
+        # small summary
+        st.caption(
+            f"Showing sensor data for **{location}** "
+            f"from {detail_agg['_t'].min():%Y-%m-%d %H:%M} "
+            f"to {detail_agg['_t'].max():%Y-%m-%d %H:%M}"
+        )
