@@ -411,85 +411,143 @@ if st.session_state.page == "details":
     st.stop()  # make sure the map below does not run on this page
 # ====================================================================
 
-# ===================== TIME-LAPSE PAGE (animated map) ======================
+# ===================== TIME-LAPSE PAGE (Folium, same look as Map) ======================
 if st.session_state.page == "timelapse":
-    import plotly.express as px
+    import streamlit as st
+    import pandas as pd
+    from folium.plugins import HeatMapWithTime, TimestampedGeoJson
 
-    st.header("▶️ Time-lapse — People over Time")
+    st.header("▶️ Time-lapse — People pattern over time (Folium)")
 
-    # Controls
-    use_current_range = st.checkbox("Use current time range only", value=False,
-                                    help="If off, animates the full selected day.")
-    # Build the time window for the animation
+    # Controls for the timelapse page
+    viz_choice = st.radio(
+        "Animation style",
+        ["Bubbles (like Map)", "Heatmap (like Map)"],
+        horizontal=True
+    )
+    use_current_range = st.checkbox(
+        "Use current time range only",
+        value=False,
+        help="If off, animates the full selected date."
+    )
+
+    # Build the animation window
     if use_current_range:
         ani_start, ani_end = selected_start, selected_end
     else:
-        # animate the full selected day
-        day_start = pd.Timestamp.combine(selected_date, pd.Timestamp.min.time())
-        day_end   = pd.Timestamp.combine(selected_date, pd.Timestamp.max.time())
-        # clip to data availability on that day
+        # animate the full selected day (clipped to data availability)
         mask_day = (flow_long["_t"].dt.date == selected_date)
         if mask_day.any():
             day_times = flow_long.loc[mask_day, "_t"].sort_values()
-            ani_start = max(day_start, day_times.min())
-            ani_end   = min(day_end,   day_times.max())
+            ani_start, ani_end = day_times.min(), day_times.max()
         else:
             ani_start, ani_end = selected_start, selected_end
 
-    # Prepare frame data: sum per sensor per timestamp, then join coords
+    # Prepare per-frame data: sum per sensor per timestamp, then join coords
     df_frames = (
-        flow_long.loc[(flow_long["_t"] >= ani_start) & (flow_long["_t"] <= ani_end),
-                      ["_t", "join_key", "value"]]
-                  .groupby(["_t", "join_key"], as_index=False)["value"].sum()
-                  .merge(sensors[["join_key", "location_name", "_lat", "_lon"]],
-                         on="join_key", how="inner")
+        flow_long.loc[
+            (flow_long["_t"] >= ani_start) & (flow_long["_t"] <= ani_end),
+            ["_t", "join_key", "value"]
+        ]
+        .groupby(["_t", "join_key"], as_index=False)["value"].sum()
+        .merge(sensors[["join_key", "location_name", "_lat", "_lon"]],
+               on="join_key", how="inner")
+        .sort_values("_t")
     )
 
     if df_frames.empty:
         st.warning("No data available for the selected period.")
         st.stop()
 
-    # Nicely formatted frame labels (string), keeps animation snappy
-    df_frames["_t_str"] = df_frames["_t"].dt.strftime("%H:%M")
+    # Create a base Folium map identical to your Map page
+    m = make_base_map(sensors)
 
-    # Size scale for bubbles (avoid zero-size)
-    vmin, vmax = float(df_frames["value"].min()), float(df_frames["value"].max())
-    size_ref = max(1.0, vmax / 30.0)  # tune bubble sizing
-    df_frames["size"] = df_frames["value"].clip(lower=0.1) / size_ref
+    # A tidy list of frame labels (e.g., '08:15')
+    frame_times = df_frames["_t"].drop_duplicates().tolist()
+    frame_labels = [t.strftime("%H:%M") for t in frame_times]
+
+    if viz_choice.startswith("Heatmap"):
+        # -------- HeatmapWithTime (same look/feel as your static heatmap) --------
+        frames = []
+        for t in frame_times:
+            dt = df_frames.loc[df_frames["_t"] == t]
+            # same triple format used by your static heatmap: [lat, lon, weight]
+            frames.append([[float(r["_lat"]), float(r["_lon"]), float(r["value"])]
+                           for _, r in dt.iterrows() if r["value"] > 0])
+
+        HeatMapWithTime(
+            frames,
+            index=frame_labels,
+            radius=heat_radius_px,
+            auto_play=False,
+            max_opacity=0.9,
+            use_local_extrema=False
+        ).add_to(m)
+
+    else:
+        # -------- TimestampedGeoJson (animated bubbles like your Map) --------
+        # Keep bubble size scale consistent across frames
+        vmin = float(df_frames["value"].min())
+        vmax = float(df_frames["value"].max())
+        # avoid zero-divide; make a gentle scale similar to your add_bubbles()
+        def _radius_from_value(v: float) -> int:
+            if vmax == vmin:
+                return 18
+            return int(18 + 36 * (v - vmin) / max(1.0, (vmax - vmin)))
+
+        features = []
+        for t in frame_times:
+            dt = df_frames.loc[df_frames["_t"] == t]
+            for _, r in dt.iterrows():
+                val = float(r["value"])
+                color = _bubble_color(val)  # reuse your color bucketing
+                rad = _radius_from_value(val)
+                features.append({
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [float(r["_lon"]), float(r["_lat"])]
+                    },
+                    "properties": {
+                        "time": t.isoformat(),
+                        "popup": f"{r['location_name']}<br><b>Count:</b> {int(val)}<br><b>Time:</b> {t:%Y-%m-%d %H:%M}",
+                        "style": {
+                            "color": color,
+                            "fillColor": color,
+                            "fillOpacity": 0.85,
+                            "opacity": 0.95
+                        },
+                        "icon": "circle",
+                        "iconstyle": {
+                            "fillColor": color,
+                            "fillOpacity": 0.85,
+                            "stroke": True,
+                            "radius": rad
+                        }
+                    }
+                })
+
+        TimestampedGeoJson(
+            {
+                "type": "FeatureCollection",
+                "features": features
+            },
+            transition_time=200,   # ms between frames
+            add_last_point=False,
+            auto_play=False,
+            loop=False,
+            period="PT3M"          # your data are 3-minute steps; adjust if needed
+        ).add_to(m)
 
     st.caption(
         f"Animating {ani_start:%Y-%m-%d %H:%M} → {ani_end:%H:%M} "
-        f"({df_frames['_t'].nunique()} frames)"
+        f"({len(frame_times)} frames)"
     )
 
-    # Animated map (no token needed with OSM style)
-    fig_anim = px.scatter_mapbox(
-        df_frames,
-        lat="_lat", lon="_lon",
-        size="size", size_max=40,
-        color="value", color_continuous_scale="Viridis",
-        hover_name="location_name",
-        hover_data={"value": True, "_t_str": True, "_lat": False, "_lon": False, "size": False},
-        animation_frame="_t_str",
-        zoom=12, height=650,
-        title="People pattern over time"
-    )
-    fig_anim.update_layout(
-        mapbox_style="open-street-map",
-        margin=dict(l=10, r=10, t=60, b=10),
-        coloraxis_colorbar=dict(title="Count"),
-        updatemenus=[{
-            "type": "buttons",
-            "showactive": False,
-            "buttons": [
-                {"label": "▶ Play", "method": "animate", "args": [None, {"frame": {"duration": 400, "redraw": False}, "fromcurrent": True, "mode": "immediate"}]},
-                {"label": "⏸ Pause", "method": "animate", "args": [[None], {"mode": "immediate", "frame": {"duration": 0, "redraw": False}}]}
-            ]
-        }]
-    )
-    st.plotly_chart(fig_anim, use_container_width=True)
+    # Render the Leaflet map in Streamlit
+    st.components.v1.html(m.get_root().render(), height=650)
 
-    # Optional: export the frame data driving the animation
+    # Optional: download the animation frame data
     with st.expander("Export frame data (CSV)"):
         st.download_button(
             "Download CSV",
