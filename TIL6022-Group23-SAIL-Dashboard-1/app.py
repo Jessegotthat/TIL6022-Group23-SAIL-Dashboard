@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 import numpy as np
+import plotly.express as px
 import pandas as pd
 import streamlit as st
 import folium
@@ -294,10 +295,9 @@ flow_agg   = agg_window(flow_long, selected_dt, window_minutes)
 bubbles_df = sensors.merge(flow_agg, on="join_key", how="left")
 bubbles_df["count"] = bubbles_df["value_sum"].fillna(0).astype(int)
 
-# ===================== NEW: SENSOR DETAILS PAGE ======================
+# ===================== SENSOR DETAILS PAGE ======================
 # If user picked the details page, render it now and stop before map.
 if st.session_state.page == "details":
-    import plotly.express as px
 
     st.header("📈 Sensor Details")
     st.subheader("Trend by Location")
@@ -327,62 +327,81 @@ if st.session_state.page == "details":
         st.warning("No data found for this location in the flow file.")
         st.stop()
 
+    # Filter by current time range (if available)
+    try:
+        _start, _end = selected_start, selected_end
+    except NameError:
+        _start, _end = detail_df["_t"].min(), detail_df["_t"].max()
+
+    detail_df = detail_df[(detail_df["_t"] >= _start) & (detail_df["_t"] <= _end)]
+
     # Aggregate by timestamp (sum if multiple sensors share a location)
     detail_agg = (
         detail_df.groupby("_t", as_index=False)["value"].sum()
                  .sort_values("_t")
     )
 
-    # Plot
-    fig = px.line(
-        detail_agg, x="_t", y="value",
-        labels={"_t": "Time", "value": "Flow Count"},
-        title=f"{location} — People over Time"
+    # ---- KPI: Now vs 24h avg ----
+    now_val = float(detail_agg["value"].iloc[-1]) if not detail_agg.empty else 0.0
+    _24h_start = _end - pd.Timedelta(hours=24)
+    df24 = flow_long.loc[
+        (flow_long["join_key"].isin(loc_keys)) &
+        (flow_long["_t"] >= _24h_start) & (flow_long["_t"] <= _end),
+        ["_t","value"]
+    ]
+    avg24 = float(df24["value"].mean()) if not df24.empty else 0.0
+
+    # ---- Plot (Plotly or fallback to Altair) ----
+    try:
+        import plotly.express as px
+        fig = px.line(
+            detail_agg,
+            x="_t",
+            y="value",
+            labels={"_t": "Time", "value": "Flow Count"},
+            title=f"{location} — People over Time"
+        )
+        fig.update_layout(height=450, margin=dict(l=10, r=10, b=10, t=50))
+        st.plotly_chart(fig, use_container_width=True)
+    except ModuleNotFoundError:
+        import altair as alt
+        chart = (
+            alt.Chart(detail_agg)
+               .mark_line()
+               .encode(
+                   x=alt.X("_t:T", title="Time"),
+                   y=alt.Y("value:Q", title="Flow Count"),
+                   tooltip=["_t:T", "value:Q"]
+               )
+               .properties(title=f"{location} — People over Time", height=450)
+        )
+        st.altair_chart(chart, use_container_width=True)
+
+    # ---- KPI box below chart ----
+    import streamlit.components.v1 as components
+    delta_val = now_val - avg24
+    delta_color = "#2ECC71" if delta_val >= 0 else "#E74C3C"
+    kpi_html = f"""
+    <div style="display:flex;flex-direction:column;align-items:flex-start;margin-top:1.2rem;">
+      <div style="font-size:2.2rem;font-weight:600;color:white;">{now_val:,.2f}</div>
+      <div style="color:{delta_color};background-color:{delta_color}20;
+                  padding:.25rem .6rem;border-radius:8px;font-size:.9rem;
+                  font-weight:500;margin-top:.3rem;">
+        {'▲' if delta_val>=0 else '▼'} {delta_val:,.2f} vs 24 h avg
+      </div>
+    </div>
+    """
+    components.html(kpi_html, height=100)
+
+    st.caption(
+        f"Showing data for **{location}** "
+        f"from {_start:%Y-%m-%d %H:%M} to {_end:%H:%M} "
+        f"(points: {len(detail_agg):,})"
     )
-    fig.update_layout(height=450, margin=dict(l=10, r=10, b=10, t=50))
-    st.plotly_chart(fig, use_container_width=True)
 
-    fig.update_layout(height=450, margin=dict(l=10, r=10, b=10, t=50))
-st.plotly_chart(fig, use_container_width=True)
+    st.stop()  # make sure the map below does not run on this page
+# ====================================================================
 
-# ---- KPI box below chart ----
-import streamlit.components.v1 as components
-
-delta_val = now_val - avg24
-delta_color = "#2ECC71" if delta_val >= 0 else "#E74C3C"
-
-kpi_html = f"""
-<div style="
-    display:flex;flex-direction:column;align-items:flex-start;
-    margin-top:1.5rem;
-    font-family: 'Inter', sans-serif;
-">
-  <div style="font-size:2.2rem;font-weight:600;color:white;">
-    {now_val:,.2f}
-  </div>
-  <div style="
-      color:{delta_color};
-      background-color:{delta_color}20;
-      padding:0.25rem 0.6rem;
-      border-radius:8px;
-      font-size:0.9rem;
-      font-weight:500;
-      margin-top:0.3rem;
-  ">
-    {'▲' if delta_val>=0 else '▼'} {delta_val:,.2f} vs 24 h avg
-  </div>
-</div>
-"""
-
-components.html(kpi_html, height=100)
-
-st.caption(
-    f"Showing data for **{location}** "
-    f"from {detail_agg['_t'].min():%Y-%m-%d %H:%M} "
-    f"to {detail_agg['_t'].max():%Y-%m-%d %H:%M}."
-)
-
-st.stop()  # <- keep this here
 
 # ====================================================================
 
