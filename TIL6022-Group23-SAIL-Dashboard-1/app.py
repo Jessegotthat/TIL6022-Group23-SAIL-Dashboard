@@ -312,14 +312,16 @@ st.header("📈 Sensor Details")
 tab_map, tab_detail = st.tabs(["🗺️ Map", "📈 Sensor Details"])
 
 with tab_map:
-    # keep your existing map and KPI content inside this block
+    # ---- Map ----
     m = make_base_map(sensors)
     if viz_mode in ("Heatmap", "Both"):
         add_heatmap(m, bubbles_df, radius_px=heat_radius_px)
     if viz_mode in ("Bubbles", "Both"):
         add_bubbles(m, bubbles_df, selected_dt, window_minutes)
+
     st.components.v1.html(m.get_root().render(), height=650)
 
+    # ---- KPIs ----
     total_people      = int(bubbles_df["count"].sum())
     sensors_with_data = int((bubbles_df["count"] > 0).sum())
     k1, k2, k3 = st.columns(3)
@@ -330,43 +332,49 @@ with tab_map:
 with tab_detail:
     import plotly.express as px
 
+    st.header("📈 Sensor Details")
     st.subheader("Trend by Location")
 
-    # Use location names from your 'sensors' DataFrame
+    # Location list from your sensors metadata
+    locations = sensors["location_name"].dropna().sort_values().unique().tolist()
+    if not locations:
+        st.warning("No locations available in sensors metadata.")
+        st.stop()
+
     location = st.selectbox(
         "Choose location",
-        options=sensors["location_name"].unique(),
+        options=locations,
         index=0,
-        help="Select a location to see its sensor trend"
+        help="This list comes from the sensors Excel file (Locatienaam)."
     )
 
-    # Match the selected location’s sensor join_keys
+    # sensor(s) for that location
     loc_keys = sensors.loc[sensors["location_name"] == location, "join_key"].tolist()
-    detail_df = flow_long[flow_long["join_key"].isin(loc_keys)].copy()
 
+    # time series from your already-loaded flow_long
+    detail_df = flow_long.loc[flow_long["join_key"].isin(loc_keys), ["_t", "value"]].copy()
     if detail_df.empty:
-        st.warning("No data found for this location.")
-    else:
-        # Summarize counts by timestamp
-        detail_agg = (
-            detail_df.groupby("_t", as_index=False)["value"].sum()
-            .sort_values("_t")
-        )
+        st.warning("No data found for this location in the flow file.")
+        st.stop()
 
-        # Line chart
-        fig = px.line(
-            detail_agg,
-            x="_t",
-            y="value",
-            title=f"{location} — People over Time",
-            labels={"_t": "Time", "value": "Flow Count"},
-        )
-        fig.update_layout(height=450, margin=dict(l=10, r=10, b=10, t=50))
-        st.plotly_chart(fig, use_container_width=True)
+    # aggregate by timestamp (sum if multiple sensors share a location)
+    detail_agg = (
+        detail_df.groupby("_t", as_index=False)["value"].sum()
+                 .sort_values("_t")
+    )
 
-        # small summary
-        st.caption(
-            f"Showing sensor data for **{location}** "
-            f"from {detail_agg['_t'].min():%Y-%m-%d %H:%M} "
-            f"to {detail_agg['_t'].max():%Y-%m-%d %H:%M}"
-        )
+    # plot
+    fig = px.line(
+        detail_agg,
+        x="_t", y="value",
+        labels={"_t": "Time", "value": "Flow Count"},
+        title=f"{location} — People over Time"
+    )
+    fig.update_layout(height=450, margin=dict(l=10, r=10, b=10, t=50))
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.caption(
+        f"Showing data for **{location}** "
+        f"from {detail_agg['_t'].min():%Y-%m-%d %H:%M} "
+        f"to {detail_agg['_t'].max():%Y-%m-%d %H:%M}."
+    )
