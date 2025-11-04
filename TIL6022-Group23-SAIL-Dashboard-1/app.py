@@ -199,6 +199,7 @@ def add_heatmap(m: folium.Map, df: pd.DataFrame, radius_px: int) -> None:
 
 # ---------------- UI ----------------
 st.title("🌊 SAIL Sensors — Per-Sensor Counts & Heatmap")
+tab_map, tab_detail = st.tabs(["🗺️ Map", "📈 Sensor Details"])
 
 with st.sidebar:
     st.header("📁 Files")
@@ -282,21 +283,23 @@ bubbles_df = sensors.merge(flow_agg, on="join_key", how="left")
 bubbles_df["count"] = bubbles_df["value_sum"].fillna(0).astype(int)
 
 # ---- Map ----
-m = make_base_map(sensors)
-if viz_mode in ("Heatmap", "Both"):
-    add_heatmap(m, bubbles_df, radius_px=heat_radius_px)
-if viz_mode in ("Bubbles", "Both"):
-    add_bubbles(m, bubbles_df, selected_dt, window_minutes)
+with tab_map:
+    # ---- Map ----
+    m = make_base_map(sensors)
+    if viz_mode in ("Heatmap", "Both"):
+        add_heatmap(m, bubbles_df, radius_px=heat_radius_px)
+    if viz_mode in ("Bubbles", "Both"):
+        add_bubbles(m, bubbles_df, selected_dt, window_minutes)
 
-st.components.v1.html(m.get_root().render(), height=650)
+    st.components.v1.html(m.get_root().render(), height=650)
 
-# ---- KPIs ----
-total_people      = int(bubbles_df["count"].sum())
-sensors_with_data = int((bubbles_df["count"] > 0).sum())
-k1, k2, k3 = st.columns(3)
-k1.metric("📍 Sensors plotted", f"{len(sensors)}")
-k2.metric("📊 Sensors w/ data", f"{sensors_with_data}")
-k3.metric("👥 Total people (window)", f"{total_people}")
+    # ---- KPIs ----
+    total_people      = int(bubbles_df["count"].sum())
+    sensors_with_data = int((bubbles_df["count"] > 0).sum())
+    k1, k2, k3 = st.columns(3)
+    k1.metric("📍 Sensors plotted", f"{len(sensors)}")
+    k2.metric("📊 Sensors w/ data", f"{sensors_with_data}")
+    k3.metric("👥 Total people (window)", f"{total_people}")
 
 # ============================================================
 # SECOND PAGE (Sensor Details) – added below existing map code
