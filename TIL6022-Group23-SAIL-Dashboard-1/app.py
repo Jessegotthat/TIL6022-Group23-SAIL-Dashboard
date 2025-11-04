@@ -263,18 +263,31 @@ else:
     mid_idx = len(day_times) // 2
     default_dt = min(max(pd.Timestamp(day_times[mid_idx]).to_pydatetime(), t_min), t_max)
 
+# ---- Time range slider (replaces the single time slider) ----
+# Use your existing default_dt to build a sensible default range
+range_start_default = max(t_min, default_dt - timedelta(minutes=window_minutes))
+range_end_default   = min(t_max, default_dt + timedelta(minutes=window_minutes))
+
 with c2:
-    selected_dt = st.slider(
-        "⏰ Pick a time (single)",
+    selected_start, selected_end = st.slider(
+        "⏰ Pick a time range",
         min_value=t_min,
         max_value=t_max,
-        value=default_dt,
+        value=(range_start_default, range_end_default),
         step=timedelta(minutes=3),
         format="HH:mm:ss",
-        help="Counts are summed within the ± window around the selected time."
+        help="Choose start and end times. Counts are summed across this range."
     )
 
-st.caption(f"Selected window: {selected_dt:%Y-%m-%d %H:%M} ± {window_minutes} minutes")
+# Convert the chosen range to a midpoint + half-width so existing code keeps working
+selected_dt = selected_start + (selected_end - selected_start) / 2
+window_minutes = int(((selected_end - selected_start).total_seconds() / 60) / 2)
+
+st.caption(
+    f"Selected range: {selected_start:%Y-%m-%d %H:%M} → "
+    f"{selected_end:%H:%M} (midpoint {selected_dt:%H:%M}, ±{window_minutes} min)"
+)
+
 
 # ---- Aggregate + join ----
 flow_agg   = agg_window(flow_long, selected_dt, window_minutes)
