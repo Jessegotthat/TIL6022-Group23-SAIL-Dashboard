@@ -205,9 +205,18 @@ with st.sidebar:
     window_minutes = st.slider("± minutes around time (smoothing)", 0, 60, DEFAULT_WINDOW_MIN, 1)
 
     st.markdown("---")
-    page_choice = st.radio("Page", ["🗺️ Map", "📈 Sensor Details"],
-                           index=0 if st.session_state.page == "map" else 1)
-    st.session_state.page = "map" if page_choice.startswith("🗺️") else "details"
+    page_choice = st.radio(
+    "Page",
+    ["🗺️ Map", "📈 Sensor Details", "▶️ Time-lapse"],
+    index={"map":0, "details":1, "timelapse":2}.get(st.session_state.page, 0)
+)
+
+st.session_state.page = (
+    "map" if page_choice.startswith("🗺️")
+    else "details" if page_choice.startswith("📈")
+    else "timelapse"
+)
+
 
 # Load data
 try:
