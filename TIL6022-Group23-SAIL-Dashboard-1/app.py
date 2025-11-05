@@ -187,13 +187,12 @@ def add_bubbles(m: folium.Map, df: pd.DataFrame, selected_dt: datetime, window_m
         </div>
         """
         folium.Marker(
-    location=[float(r["_lat"]), float(r["_lon"])],
-    icon=folium.DivIcon(html=html),
-    tooltip=(f"{r['location_name']}<br>"
+            location=[float(r["_lat"]), float(r["_lon"])],
+            icon=folium.DivIcon(html=html),
+            tooltip=(f"{r['location_name']}<br>"
              f"<b>Count:</b> {count}<br>"
              f"<b>Time:</b> {selected_dt:%Y-%m-%d %H:%M} (±{window_minutes}m)"),
-
-    popup=folium.Popup(str(r["location_name"]), max_width=180),
+            popup=folium.Popup(str(r["location_name"]), max_width=180),
 ).add_to(m)
 
 
@@ -619,11 +618,9 @@ with left_col:
             if st.session_state.get("clicked_location") != clicked_name:
                 st.session_state["clicked_location"] = clicked_name
                 st.rerun() 
-
-
-    else:
+        else:
         # Fallback when streamlit-folium isn't available
-        st.components.v1.html(m.get_root().render(), height=650)
+            st.components.v1.html(m.get_root().render(), height=650)
 
 
 with right_col:
@@ -632,28 +629,28 @@ with right_col:
     # read the global 'whole event' toggle
     use_whole_event = st.session_state.get("use_whole_event", False)
 
-    # location picker (by location name, not sensor code)
-    # location picker (by location name, not sensor code)
-locations = sensors["location_name"].dropna().sort_values().unique().tolist()
-if not locations:
-    st.warning("No locations available in sensors metadata.")
-else:
-    clicked_loc = st.session_state.get("clicked_location")
-    default_idx = locations.index(clicked_loc) if clicked_loc in locations else 0
+# location picker (by location name, not sensor code)
+    locations = sensors["location_name"].dropna().sort_values().unique().tolist()
+    if not locations:
+        st.warning("No locations available in sensors metadata.")
+    else:
+        # Default to the last clicked bubble (if any)
+        clicked_loc = st.session_state.get("clicked_location")
+        default_idx = locations.index(clicked_loc) if clicked_loc in locations else 0
 
-    location = st.selectbox(
-        "Choose location",
-        options=locations,
-        index=default_idx,                     # <-- use the computed default
-        key="trend_loc_on_map_page",
-        help="Tip: click a bubble on the map to jump here."
-    )
+        location = st.selectbox(
+            "Choose location",
+            options=locations,
+            index=default_idx,
+            key="trend_loc_on_map_page",
+            help="Tip: click a bubble on the map to jump here."
+        )
 
-    if clicked_loc and clicked_loc == location:
-        st.caption(f"📍 Selected from map: **{clicked_loc}**")
+        # Optional hint if the selection came from the map
+        if clicked_loc and clicked_loc == location:
+            st.caption(f"📍 Selected from map: **{clicked_loc}**")
 
-
-        # time window for the chart (whole event OR current range)
+        # ---- time window for the chart (whole event OR current range) ----
         if use_whole_event:
             _start, _end = flow_long["_t"].min(), flow_long["_t"].max()
         else:
@@ -672,9 +669,11 @@ else:
         if detail_df.empty:
             st.info("No data found for this location in the selected period.")
         else:
-            detail_agg = (detail_df.groupby("_t", as_index=False)["value"]
-                                  .sum()
-                                  .sort_values("_t"))
+            detail_agg = (
+                detail_df.groupby("_t", as_index=False)["value"]
+                         .sum()
+                         .sort_values("_t")
+            )
 
             # KPI: Now vs 24h avg (ending at _end)
             now_val = float(detail_agg["value"].iloc[-1])
@@ -682,7 +681,7 @@ else:
             df24 = flow_long.loc[
                 (flow_long["join_key"].isin(loc_keys)) &
                 (flow_long["_t"] >= _24h_start) & (flow_long["_t"] <= _end),
-                ["_t","value"]
+                ["_t", "value"]
             ]
             avg24 = float(df24["value"].mean()) if not df24.empty else 0.0
 
@@ -732,6 +731,7 @@ else:
             else:
                 st.caption(f"{location} • range {_start:%Y-%m-%d %H:%M} → {_end:%H:%M} "
                            f"(points: {len(detail_agg):,})")
+
 
 
 # ---- KPIs (UNCHANGED) ----
