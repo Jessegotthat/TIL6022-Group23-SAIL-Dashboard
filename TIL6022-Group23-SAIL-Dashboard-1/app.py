@@ -623,6 +623,7 @@ with left_col:
         st.components.v1.html(m.get_root().render(), height=650)
 
 # ---------------- RIGHT: TREND (driven by selection/click) ----------------
+# ---------------- RIGHT: TREND (driven only by map click) ----------------
 with right_col:
     st.subheader("Trend by Location")
 
@@ -632,27 +633,31 @@ with right_col:
     if not locations:
         st.warning("No locations available in sensors metadata.")
     else:
+        # location comes from the map click; fall back to the top-count location
         clicked_loc = st.session_state.get("clicked_location")
-        default_idx = locations.index(clicked_loc) if clicked_loc in locations else 0
+        if clicked_loc in locations:
+            location = clicked_loc
+            st.caption(f"📍 Selected from map: **{location}**")
+        else:
+            # auto-pick the location with highest count in current window
+            if not bubbles_df.empty:
+                location = (
+                    bubbles_df.sort_values("count", ascending=False)["location_name"].iloc[0]
+                )
+            else:
+                location = locations[0]
+            st.caption("Tip: click a bubble on the map to choose a location.")
 
-        location = st.selectbox(
-            "Choose location",
-            options=locations,
-            index=default_idx,
-            key="trend_loc_on_map_page",
-            help="Tip: click a bubble on the map to jump here."
-        )
-
-        if clicked_loc and clicked_loc == location:
-            st.caption(f"📍 Selected from map: **{clicked_loc}**")
-
+        # pick the time window
         if use_whole_event:
             _start, _end = flow_long["_t"].min(), flow_long["_t"].max()
         else:
             _start, _end = selected_start, selected_end
 
+        # join keys for that location
         loc_keys = sensors.loc[sensors["location_name"] == location, "join_key"].tolist()
 
+        # filter the time series
         detail_df = flow_long.loc[
             (flow_long["join_key"].isin(loc_keys)) &
             (flow_long["_t"] >= _start) & (flow_long["_t"] <= _end),
@@ -668,6 +673,7 @@ with right_col:
                          .sort_values("_t")
             )
 
+            # KPI: now vs 24h avg
             now_val = float(detail_agg["value"].iloc[-1])
             _24h_start = _end - pd.Timedelta(hours=24)
             df24 = flow_long.loc[
@@ -677,6 +683,7 @@ with right_col:
             ]
             avg24 = float(df24["value"].mean()) if not df24.empty else 0.0
 
+            # chart
             try:
                 import plotly.express as px
                 fig = px.line(
@@ -700,6 +707,7 @@ with right_col:
                 )
                 st.altair_chart(chart, use_container_width=True)
 
+            # KPI pill
             import streamlit.components.v1 as components
             delta_val = now_val - avg24
             delta_color = "#2ECC71" if delta_val >= 0 else "#E74C3C"
@@ -714,6 +722,7 @@ with right_col:
             """
             components.html(kpi_html, height=90)
 
+            # caption
             if use_whole_event:
                 st.caption(
                     f"{location} • whole event "
@@ -725,6 +734,7 @@ with right_col:
                     f"{location} • range {_start:%Y-%m-%d %H:%M} → {_end:%H:%M} "
                     f"(points: {len(detail_agg):,})"
                 )
+
 
 # ---- KPIs ----
 total_people      = int(bubbles_df["count"].sum())
