@@ -601,26 +601,26 @@ with left_col:
         add_bubbles(m, bubbles_df, selected_dt, window_minutes)
 
     if _USE_ST_FOLIUM:
-        # Render Folium map and capture interactions
+    # Render Folium map and capture interactions
         map_state = st_folium(m, height=650, width=None)
 
-        # Read popup text from the last clicked object
-        clicked_name = None
-        if isinstance(map_state, dict):
-            pop = map_state.get("last_object_clicked_popup")
-            if isinstance(pop, dict):
-                clicked_name = pop.get("content")
-            elif isinstance(pop, str):
-                clicked_name = pop
+    # Read popup text from the last clicked object
+    clicked_name = None
+    if isinstance(map_state, dict):
+        pop = map_state.get("last_object_clicked_popup")
+        if isinstance(pop, dict):
+            clicked_name = pop.get("content")
+        elif isinstance(pop, str):
+            clicked_name = pop
 
-        # Persist clicked location (if any)
-        if clicked_name:
-            if st.session_state.get("clicked_location") != clicked_name:
-                st.session_state["clicked_location"] = clicked_name
-                st.rerun() 
-        else:
-        # Fallback when streamlit-folium isn't available
-            st.components.v1.html(m.get_root().render(), height=650)
+    # Persist + auto-refresh if new selection
+    if clicked_name and st.session_state.get("clicked_location") != clicked_name:
+        st.session_state["clicked_location"] = clicked_name
+        st.rerun()
+
+    else:
+    # Fallback when streamlit-folium isn't available
+        st.components.v1.html(m.get_root().render(), height=650)
 
 
 with right_col:
