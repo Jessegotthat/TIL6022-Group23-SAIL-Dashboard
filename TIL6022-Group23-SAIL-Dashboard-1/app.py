@@ -186,14 +186,19 @@ def add_bubbles(m: folium.Map, df: pd.DataFrame, selected_dt: datetime, window_m
             {count}
         </div>
         """
-        folium.Marker(
-            location=[float(r["_lat"]), float(r["_lon"])],
-            icon=folium.DivIcon(html=html),
-            tooltip=(f"{r['location_name']}<br>"
-             f"<b>Count:</b> {count}<br>"
-             f"<b>Time:</b> {selected_dt:%Y-%m-%d %H:%M} (±{window_minutes}m)"),
-            popup=folium.Popup(str(r["location_name"]), max_width=180),
+       
+folium.Marker(
+    location=[float(r["_lat"]), float(r["_lon"])],
+    icon=folium.DivIcon(html=html),  # keep your styled bubble
+    tooltip=(
+        f"{r['location_name']}<br>"
+        f"<b>Count:</b> {count}<br>"
+        f"<b>Time:</b> {selected_dt:%Y-%m-%d %H:%M} (±{window_minutes}m)"
+    ),
+    # 👇 NEW: carry the location name so clicks can select the chart
+    popup=folium.Popup(str(r["location_name"]), max_width=180),
 ).add_to(m)
+
 
 
 def add_heatmap(m: folium.Map, df: pd.DataFrame, radius_px: int) -> None:
@@ -591,52 +596,61 @@ st.stop()
 # ====================================================================
 
 # ---- Map + Trend side by side ----
+# =================== MAP PAGE: MAP + TREND SIDE BY SIDE ===================
+# (Everything above here stays as you already have it: the date picker,
+#  the time-range slider that defines selected_start/selected_end,
+#  the bubbles_df build, viz_mode radio/heatmap_radius, etc.)
+
 left_col, right_col = st.columns([3, 2], gap="large")
 
+# ---------------- LEFT: MAP (with safe click capture) ----------------
 with left_col:
+    # Build base map and layers (same logic you already use)
     m = make_base_map(sensors)
+
     if viz_mode in ("Heatmap", "Both"):
         add_heatmap(m, bubbles_df, radius_px=heat_radius_px)
+
     if viz_mode in ("Bubbles", "Both"):
         add_bubbles(m, bubbles_df, selected_dt, window_minutes)
 
-    st.caption(f"Debug: _USE_ST_FOLIUM={_USE_ST_FOLIUM}, bubbles_df={len(bubbles_df)}")
+    # (Optional tiny debug—delete later)
+    # st.caption(f"_USE_ST_FOLIUM={_USE_ST_FOLIUM}, bubbles_df={len(bubbles_df)}")
 
     if _USE_ST_FOLIUM:
-    # Render Folium map and capture interactions
+        # Render Folium map and capture interactions
         map_state = st_folium(m, height=650, width=None)
 
-    # Read popup text from the last clicked object
-    clicked_name = None
-    if isinstance(map_state, dict):
-        pop = map_state.get("last_object_clicked_popup")
-        if isinstance(pop, dict):
-            clicked_name = pop.get("content")
-        elif isinstance(pop, str):
-            clicked_name = pop
+        # Read popup text from the last clicked object (location_name)
+        clicked_name = None
+        if isinstance(map_state, dict):
+            pop = map_state.get("last_object_clicked_popup")
+            if isinstance(pop, dict):
+                clicked_name = pop.get("content")
+            elif isinstance(pop, str):
+                clicked_name = pop
 
-    # Persist + auto-refresh if new selection
-    if clicked_name and st.session_state.get("clicked_location") != clicked_name:
-        st.session_state["clicked_location"] = clicked_name
-        st.rerun()
-
+        # Persist + auto-refresh if user picked a different location
+        if clicked_name and st.session_state.get("clicked_location") != clicked_name:
+            st.session_state["clicked_location"] = clicked_name
+            st.rerun()
     else:
-    # Fallback when streamlit-folium isn't available
+        # Fallback when streamlit-folium isn't available
         st.components.v1.html(m.get_root().render(), height=650)
 
-
+# ---------------- RIGHT: TREND (driven by selection/click) ----------------
 with right_col:
     st.subheader("Trend by Location")
 
-    # read the global 'whole event' toggle
+    # Whole-event toggle (you already set this on the left; we just read it)
     use_whole_event = st.session_state.get("use_whole_event", False)
 
-# location picker (by location name, not sensor code)
+    # Location list from sensors metadata
     locations = sensors["location_name"].dropna().sort_values().unique().tolist()
     if not locations:
         st.warning("No locations available in sensors metadata.")
     else:
-        # Default to the last clicked bubble (if any)
+        # Default the dropdown to the most recent map click (if any)
         clicked_loc = st.session_state.get("clicked_location")
         default_idx = locations.index(clicked_loc) if clicked_loc in locations else 0
 
@@ -648,20 +662,19 @@ with right_col:
             help="Tip: click a bubble on the map to jump here."
         )
 
-        # Optional hint if the selection came from the map
         if clicked_loc and clicked_loc == location:
             st.caption(f"📍 Selected from map: **{clicked_loc}**")
 
-        # ---- time window for the chart (whole event OR current range) ----
+        # Pick the time window for the series
         if use_whole_event:
             _start, _end = flow_long["_t"].min(), flow_long["_t"].max()
         else:
-            _start, _end = selected_start, selected_end  # from your range slider
+            _start, _end = selected_start, selected_end  # your range slider picks
 
-        # sensors at that location -> join_keys
+        # Join keys for that location (handles multi-sensor locations)
         loc_keys = sensors.loc[sensors["location_name"] == location, "join_key"].tolist()
 
-        # build series + aggregate (handles multi-sensor locations)
+        # Filter time series for the chosen location and window
         detail_df = flow_long.loc[
             (flow_long["join_key"].isin(loc_keys)) &
             (flow_long["_t"] >= _start) & (flow_long["_t"] <= _end),
@@ -671,13 +684,14 @@ with right_col:
         if detail_df.empty:
             st.info("No data found for this location in the selected period.")
         else:
+            # Aggregate across sensors at same location (if any)
             detail_agg = (
                 detail_df.groupby("_t", as_index=False)["value"]
                          .sum()
                          .sort_values("_t")
             )
 
-            # KPI: Now vs 24h avg (ending at _end)
+            # KPI: Now vs 24h avg ending at _end
             now_val = float(detail_agg["value"].iloc[-1])
             _24h_start = _end - pd.Timedelta(hours=24)
             df24 = flow_long.loc[
@@ -687,7 +701,7 @@ with right_col:
             ]
             avg24 = float(df24["value"].mean()) if not df24.empty else 0.0
 
-            # chart (Plotly if available, otherwise Altair)
+            # Chart — Plotly if present, else Altair
             try:
                 import plotly.express as px
                 fig = px.line(
@@ -711,7 +725,7 @@ with right_col:
                 )
                 st.altair_chart(chart, use_container_width=True)
 
-            # KPI pill below chart
+            # KPI pill
             import streamlit.components.v1 as components
             delta_val = now_val - avg24
             delta_color = "#2ECC71" if delta_val >= 0 else "#E74C3C"
@@ -726,13 +740,19 @@ with right_col:
             """
             components.html(kpi_html, height=90)
 
-            # caption that respects whole-event mode
+            # Caption
             if use_whole_event:
-                st.caption(f"{location} • whole event {_start:%Y-%m-%d %H:%M} → {_end:%Y-%m-%d %H:%M} "
-                           f"(points: {len(detail_agg):,})")
+                st.caption(
+                    f"{location} • whole event "
+                    f"{_start:%Y-%m-%d %H:%M} → {_end:%Y-%m-%d %H:%M} "
+                    f"(points: {len(detail_agg):,})"
+                )
             else:
-                st.caption(f"{location} • range {_start:%Y-%m-%d %H:%M} → {_end:%H:%M} "
-                           f"(points: {len(detail_agg):,})")
+                st.caption(
+                    f"{location} • range {_start:%Y-%m-%d %H:%M} → {_end:%H:%M} "
+                    f"(points: {len(detail_agg):,})"
+                )
+# ========================================================================
 
 
 
