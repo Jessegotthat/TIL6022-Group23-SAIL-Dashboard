@@ -600,6 +600,8 @@ with left_col:
     if viz_mode in ("Bubbles", "Both"):
         add_bubbles(m, bubbles_df, selected_dt, window_minutes)
 
+    st.caption(f"Debug: _USE_ST_FOLIUM={_USE_ST_FOLIUM}, bubbles_df={len(bubbles_df)}")
+
     if _USE_ST_FOLIUM:
     # Render Folium map and capture interactions
         map_state = st_folium(m, height=650, width=None)
