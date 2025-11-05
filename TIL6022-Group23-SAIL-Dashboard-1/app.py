@@ -1,15 +1,16 @@
-# app.py  — your original map app + a safe extra page (Sensor Details)
+# app.py — SAIL Sensors — Map, Sensor Details, and Time-lapse
 
 import re
 from pathlib import Path
 from datetime import datetime, timedelta
 
 import numpy as np
-import plotly.express as px
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 import folium
 from folium.plugins import HeatMap
+
 try:
     from streamlit_folium import st_folium
     _USE_ST_FOLIUM = True
@@ -26,11 +27,12 @@ DEFAULT_WINDOW_MIN = 15
 
 st.set_page_config(page_title="SAIL Sensors — Per-Sensor Counts & Heatmap", layout="wide")
 
-# ---------------- SIMPLE PAGE ROUTER (ADD) ----------------
-# This does NOT change your logic; it just lets the user pick which page to view.
+
+# ---------------- SIMPLE PAGE ROUTER ----------------
 if "page" not in st.session_state:
     st.session_state.page = "map"
-# ---------------------------------------------------------
+# ----------------------------------------------------
+
 
 # ---------------- HELPERS ----------------
 def _norm(s: str) -> str:
@@ -40,6 +42,7 @@ def _norm(s: str) -> str:
     s = re.sub(r'[-_ ]+[a-z]$', '', s)     # drop trailing "-a" / "-b"
     s = re.sub(r'[^a-z0-9]', '', s)        # keep only a-z0-9
     return s
+
 
 # ---------------- LOADERS ----------------
 @st.cache_data(show_spinner=False)
@@ -75,6 +78,7 @@ def load_sensors(path: Path) -> pd.DataFrame:
     out = out.dropna(subset=["_lat", "_lon"])
     out["join_key"] = out["code"].apply(_norm)
     return out
+
 
 @st.cache_data(show_spinner=False)
 def load_flow_wide_to_long(path: Path) -> pd.DataFrame:
@@ -140,6 +144,7 @@ def load_flow_wide_to_long(path: Path) -> pd.DataFrame:
 
     return long_df
 
+
 def agg_window(long_df: pd.DataFrame, selected_dt: datetime, window_minutes: int) -> pd.DataFrame:
     """Sum values per join_key within ±window minutes around selected_dt."""
     start = selected_dt - timedelta(minutes=window_minutes)
@@ -151,6 +156,7 @@ def agg_window(long_df: pd.DataFrame, selected_dt: datetime, window_minutes: int
     agg.rename(columns={"value": "value_sum"}, inplace=True)
     return agg
 
+
 def latest_nonzero_dt(long_df: pd.DataFrame) -> datetime:
     totals = long_df.groupby("_t", as_index=False)["value"].sum()
     nz = totals.loc[totals["value"] > 0]
@@ -158,16 +164,19 @@ def latest_nonzero_dt(long_df: pd.DataFrame) -> datetime:
         return nz["_t"].max().to_pydatetime()
     return long_df["_t"].min().to_pydatetime()
 
+
 # ---------------- MAP ----------------
 def make_base_map(sensors_df: pd.DataFrame) -> folium.Map:
     center = [sensors_df["_lat"].mean(), sensors_df["_lon"].mean()] if not sensors_df.empty else CITY_CENTER
     return folium.Map(location=center, zoom_start=13, tiles="cartodbpositron")
+
 
 def _bubble_color(count: float) -> str:
     if count >= 200: return "#E74C3C"  # red
     if count >=  80: return "#F1C40F"  # amber
     if count >    0: return "#7DCEA0"  # green
     return "#95A5A6"                   # gray
+
 
 def add_bubbles(m: folium.Map, df: pd.DataFrame, selected_dt: datetime, window_minutes: int) -> None:
     if df.empty:
@@ -186,25 +195,24 @@ def add_bubbles(m: folium.Map, df: pd.DataFrame, selected_dt: datetime, window_m
             {count}
         </div>
         """
-       
-folium.Marker(
-    location=[float(r["_lat"]), float(r["_lon"])],
-    icon=folium.DivIcon(html=html),  # keep your styled bubble
-    tooltip=(
-        f"{r['location_name']}<br>"
-        f"<b>Count:</b> {count}<br>"
-        f"<b>Time:</b> {selected_dt:%Y-%m-%d %H:%M} (±{window_minutes}m)"
-    ),
-    # 👇 NEW: carry the location name so clicks can select the chart
-    popup=folium.Popup(str(r["location_name"]), max_width=180),
-).add_to(m)
-
+        folium.Marker(
+            location=[float(r["_lat"]), float(r["_lon"])],
+            icon=folium.DivIcon(html=html),  # styled bubble
+            tooltip=(
+                f"{r['location_name']}<br>"
+                f"<b>Count:</b> {count}<br>"
+                f"<b>Time:</b> {selected_dt:%Y-%m-%d %H:%M} (±{window_minutes}m)"
+            ),
+            # carry the location name so clicks can select the chart
+            popup=folium.Popup(str(r["location_name"]), max_width=180),
+        ).add_to(m)
 
 
 def add_heatmap(m: folium.Map, df: pd.DataFrame, radius_px: int) -> None:
     pts = [[float(r["_lat"]), float(r["_lon"]), float(r["count"])] for _, r in df.iterrows() if r["count"] > 0]
     if pts:
         HeatMap(pts, radius=radius_px, blur=radius_px*0.6, max_zoom=16).add_to(m)
+
 
 # ---------------- UI ----------------
 st.title("🌊 SAIL Sensors — Per-Sensor Counts & Heatmap")
@@ -219,17 +227,16 @@ with st.sidebar:
 
     st.markdown("---")
     page_choice = st.radio(
-    "Page",
-    ["🗺️ Map", "📈 Sensor Details", "▶️ Time-lapse"],
-    index={"map":0, "details":1, "timelapse":2}.get(st.session_state.page, 0)
-)
+        "Page",
+        ["🗺️ Map", "📈 Sensor Details", "▶️ Time-lapse"],
+        index={"map":0, "details":1, "timelapse":2}.get(st.session_state.page, 0)
+    )
 
 st.session_state.page = (
     "map" if page_choice.startswith("🗺️")
     else "details" if page_choice.startswith("📈")
     else "timelapse"
 )
-
 
 # Load data
 try:
@@ -265,10 +272,9 @@ with c1:
     )
     st.session_state["use_whole_event"] = use_whole_event
 
-
 # ---- Time slider (time-only label; values are naive datetimes) ----
 if use_whole_event:
-    day_mask = flow_long["_t"].notna()  
+    day_mask = flow_long["_t"].notna()
 else:
     day_mask = flow_long["_t"].dt.date == selected_date
 
@@ -290,7 +296,6 @@ t_max = pd.Timestamp(day_times[-1]).to_pydatetime()
 if t_min == t_max:
     t_min = t_min - timedelta(minutes=3)
     t_max = t_max + timedelta(minutes=3)
-
 
 # Default: latest non-zero on this date if available, else mid time
 if auto_dt.date() == selected_date:
@@ -319,13 +324,11 @@ with c2:
 selected_dt = selected_start + (selected_end - selected_start) / 2
 window_minutes = int(((selected_end - selected_start).total_seconds() / 60) / 2)
 
-# ---- Caption + optional WHOLE-EVENT override (put this before Aggregate + join) ----
+# ---- Caption + optional WHOLE-EVENT override ----
 if use_whole_event:
-    # Use the full dataset span
     selected_start = pd.Timestamp(flow_long["_t"].min()).to_pydatetime()
     selected_end   = pd.Timestamp(flow_long["_t"].max()).to_pydatetime()
 
-    # Recompute midpoint + half-width so downstream code (agg_window, tooltips) still works
     selected_dt = selected_start + (selected_end - selected_start) / 2
     window_minutes = int(((selected_end - selected_start).total_seconds() / 60) / 2)
 
@@ -339,21 +342,20 @@ else:
         f"{selected_end:%H:%M} (midpoint {selected_dt:%H:%M}, ±{window_minutes} min)"
     )
 
-
 # ---- Aggregate + join ----
 flow_agg   = agg_window(flow_long, selected_dt, window_minutes)
 bubbles_df = sensors.merge(flow_agg, on="join_key", how="left")
 bubbles_df["count"] = bubbles_df["value_sum"].fillna(0).astype(int)
 
+
 # ===================== SENSOR DETAILS PAGE ======================
-# If user picked the details page, render it now and stop before map.
 if st.session_state.page == "details":
 
     st.header("📈 Sensor Details")
     st.subheader("Trend by Location")
-# Check if the "whole event" mode is active (carried from the map page)
-    use_whole_event = st.session_state.get("use_whole_event", False)
 
+    # Check if the "whole event" mode is active (carried from the map page)
+    use_whole_event = st.session_state.get("use_whole_event", False)
 
     if "location_name" not in sensors.columns:
         st.error("Column 'location_name' not found in sensors dataframe.")
@@ -385,7 +387,7 @@ if st.session_state.page == "details":
         _start, _end = flow_long["_t"].min(), flow_long["_t"].max()
     else:
         _start, _end = selected_start, selected_end
-        
+
     detail_df = detail_df[(detail_df["_t"] >= _start) & (detail_df["_t"] <= _end)]
 
     # Aggregate by timestamp (sum if multiple sensors share a location)
@@ -452,12 +454,11 @@ if st.session_state.page == "details":
         f"(points: {len(detail_agg):,})"
     )
 
-    st.stop()  # make sure the map below does not run on this page
-# ====================================================================
+    st.stop()  # stop before map for this page
 
-# ===================== TIME-LAPSE PAGE (Folium, same look as Map) ======================
+
+# ===================== TIME-LAPSE PAGE ======================
 if st.session_state.page == "timelapse":
-    import streamlit as st
     import pandas as pd
     from folium.plugins import HeatMapWithTime, TimestampedGeoJson
 
@@ -511,11 +512,10 @@ if st.session_state.page == "timelapse":
     frame_labels = [t.strftime("%H:%M") for t in frame_times]
 
     if viz_choice.startswith("Heatmap"):
-        # -------- HeatmapWithTime (same look/feel as your static heatmap) --------
+        # -------- HeatmapWithTime --------
         frames = []
         for t in frame_times:
             dt = df_frames.loc[df_frames["_t"] == t]
-            # same triple format used by your static heatmap: [lat, lon, weight]
             frames.append([[float(r["_lat"]), float(r["_lon"]), float(r["value"])]
                            for _, r in dt.iterrows() if r["value"] > 0])
 
@@ -529,11 +529,10 @@ if st.session_state.page == "timelapse":
         ).add_to(m)
 
     else:
-        # -------- TimestampedGeoJson (animated bubbles like your Map) --------
-        # Keep bubble size scale consistent across frames
+        # -------- TimestampedGeoJson (animated bubbles) --------
         vmin = float(df_frames["value"].min())
         vmax = float(df_frames["value"].max())
-        # avoid zero-divide; make a gentle scale similar to your add_bubbles()
+
         def _radius_from_value(v: float) -> int:
             if vmax == vmin:
                 return 18
@@ -544,7 +543,7 @@ if st.session_state.page == "timelapse":
             dt = df_frames.loc[df_frames["_t"] == t]
             for _, r in dt.iterrows():
                 val = float(r["value"])
-                color = _bubble_color(val)  # reuse your color bucketing
+                color = _bubble_color(val)
                 rad = _radius_from_value(val)
                 features.append({
                     "type": "Feature",
@@ -576,11 +575,11 @@ if st.session_state.page == "timelapse":
                 "type": "FeatureCollection",
                 "features": features
             },
-            transition_time=200,   # ms between frames
+            transition_time=200,
             add_last_point=False,
             auto_play=False,
             loop=False,
-            period="PT3M"          # your data are 3-minute steps; adjust if needed
+            period="PT3M"  # your data are 3-minute steps
         ).add_to(m)
 
     st.caption(
@@ -590,22 +589,14 @@ if st.session_state.page == "timelapse":
 
     # Render the Leaflet map in Streamlit
     st.components.v1.html(m.get_root().render(), height=650)
-st.stop()
-# ====================================================================
+    st.stop()
 
-# ====================================================================
 
-# ---- Map + Trend side by side ----
 # =================== MAP PAGE: MAP + TREND SIDE BY SIDE ===================
-# (Everything above here stays as you already have it: the date picker,
-#  the time-range slider that defines selected_start/selected_end,
-#  the bubbles_df build, viz_mode radio/heatmap_radius, etc.)
-
 left_col, right_col = st.columns([3, 2], gap="large")
 
-# ---------------- LEFT: MAP (with safe click capture) ----------------
+# ---------------- LEFT: MAP ----------------
 with left_col:
-    # Build base map and layers (same logic you already use)
     m = make_base_map(sensors)
 
     if viz_mode in ("Heatmap", "Both"):
@@ -614,14 +605,9 @@ with left_col:
     if viz_mode in ("Bubbles", "Both"):
         add_bubbles(m, bubbles_df, selected_dt, window_minutes)
 
-    # (Optional tiny debug—delete later)
-    # st.caption(f"_USE_ST_FOLIUM={_USE_ST_FOLIUM}, bubbles_df={len(bubbles_df)}")
-
     if _USE_ST_FOLIUM:
-        # Render Folium map and capture interactions
         map_state = st_folium(m, height=650, width=None)
 
-        # Read popup text from the last clicked object (location_name)
         clicked_name = None
         if isinstance(map_state, dict):
             pop = map_state.get("last_object_clicked_popup")
@@ -630,27 +616,22 @@ with left_col:
             elif isinstance(pop, str):
                 clicked_name = pop
 
-        # Persist + auto-refresh if user picked a different location
         if clicked_name and st.session_state.get("clicked_location") != clicked_name:
             st.session_state["clicked_location"] = clicked_name
             st.rerun()
     else:
-        # Fallback when streamlit-folium isn't available
         st.components.v1.html(m.get_root().render(), height=650)
 
 # ---------------- RIGHT: TREND (driven by selection/click) ----------------
 with right_col:
     st.subheader("Trend by Location")
 
-    # Whole-event toggle (you already set this on the left; we just read it)
     use_whole_event = st.session_state.get("use_whole_event", False)
 
-    # Location list from sensors metadata
     locations = sensors["location_name"].dropna().sort_values().unique().tolist()
     if not locations:
         st.warning("No locations available in sensors metadata.")
     else:
-        # Default the dropdown to the most recent map click (if any)
         clicked_loc = st.session_state.get("clicked_location")
         default_idx = locations.index(clicked_loc) if clicked_loc in locations else 0
 
@@ -665,16 +646,13 @@ with right_col:
         if clicked_loc and clicked_loc == location:
             st.caption(f"📍 Selected from map: **{clicked_loc}**")
 
-        # Pick the time window for the series
         if use_whole_event:
             _start, _end = flow_long["_t"].min(), flow_long["_t"].max()
         else:
-            _start, _end = selected_start, selected_end  # your range slider picks
+            _start, _end = selected_start, selected_end
 
-        # Join keys for that location (handles multi-sensor locations)
         loc_keys = sensors.loc[sensors["location_name"] == location, "join_key"].tolist()
 
-        # Filter time series for the chosen location and window
         detail_df = flow_long.loc[
             (flow_long["join_key"].isin(loc_keys)) &
             (flow_long["_t"] >= _start) & (flow_long["_t"] <= _end),
@@ -684,14 +662,12 @@ with right_col:
         if detail_df.empty:
             st.info("No data found for this location in the selected period.")
         else:
-            # Aggregate across sensors at same location (if any)
             detail_agg = (
                 detail_df.groupby("_t", as_index=False)["value"]
                          .sum()
                          .sort_values("_t")
             )
 
-            # KPI: Now vs 24h avg ending at _end
             now_val = float(detail_agg["value"].iloc[-1])
             _24h_start = _end - pd.Timedelta(hours=24)
             df24 = flow_long.loc[
@@ -701,7 +677,6 @@ with right_col:
             ]
             avg24 = float(df24["value"].mean()) if not df24.empty else 0.0
 
-            # Chart — Plotly if present, else Altair
             try:
                 import plotly.express as px
                 fig = px.line(
@@ -725,7 +700,6 @@ with right_col:
                 )
                 st.altair_chart(chart, use_container_width=True)
 
-            # KPI pill
             import streamlit.components.v1 as components
             delta_val = now_val - avg24
             delta_color = "#2ECC71" if delta_val >= 0 else "#E74C3C"
@@ -740,7 +714,6 @@ with right_col:
             """
             components.html(kpi_html, height=90)
 
-            # Caption
             if use_whole_event:
                 st.caption(
                     f"{location} • whole event "
@@ -752,11 +725,8 @@ with right_col:
                     f"{location} • range {_start:%Y-%m-%d %H:%M} → {_end:%H:%M} "
                     f"(points: {len(detail_agg):,})"
                 )
-# ========================================================================
 
-
-
-# ---- KPIs (UNCHANGED) ----
+# ---- KPIs ----
 total_people      = int(bubbles_df["count"].sum())
 sensors_with_data = int((bubbles_df["count"] > 0).sum())
 k1, k2, k3 = st.columns(3)
