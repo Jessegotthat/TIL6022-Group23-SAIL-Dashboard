@@ -185,14 +185,15 @@ def add_bubbles(m: folium.Map, df: pd.DataFrame, selected_dt: datetime, window_m
     for _, r in df.iterrows():
         count = int(r["count"])
         color = _bubble_color(count)
-        radius = 18 if high == low else int(18 + 36 * (count - low) / max(1, (high - low)))
+        radius = 10 if high == low else int(10 + 18 * (count - low) / max(1, (high - low)))
         html = f"""
         <div style="
             width:{radius*2}px;height:{radius*2}px;border-radius:50%;
             background:{color};opacity:0.92;border:4px solid rgba(255,255,255,0.95);
             display:flex;align-items:center;justify-content:center;
             font-weight:700;color:#1B2631;box-shadow:0 2px 8px rgba(0,0,0,0.25);">
-            {count}
+            {count/1000:.1f}K
+
         </div>
         """
         folium.Marker(
