@@ -592,14 +592,116 @@ if st.session_state.page == "timelapse":
 
 # ====================================================================
 
-# ---- Map (UNCHANGED) ----
-m = make_base_map(sensors)
-if viz_mode in ("Heatmap", "Both"):
-    add_heatmap(m, bubbles_df, radius_px=heat_radius_px)
-if viz_mode in ("Bubbles", "Both"):
-    add_bubbles(m, bubbles_df, selected_dt, window_minutes)
+# ---- Map + Trend side by side ----
+left_col, right_col = st.columns([3, 2], gap="large")
 
-st.components.v1.html(m.get_root().render(), height=650)
+with left_col:
+    m = make_base_map(sensors)
+    if viz_mode in ("Heatmap", "Both"):
+        add_heatmap(m, bubbles_df, radius_px=heat_radius_px)
+    if viz_mode in ("Bubbles", "Both"):
+        add_bubbles(m, bubbles_df, selected_dt, window_minutes)
+    st.components.v1.html(m.get_root().render(), height=650)
+
+with right_col:
+    st.subheader("Trend by Location")
+
+    # read the global 'whole event' toggle
+    use_whole_event = st.session_state.get("use_whole_event", False)
+
+    # location picker (by location name, not sensor code)
+    locations = sensors["location_name"].dropna().sort_values().unique().tolist()
+    if not locations:
+        st.warning("No locations available in sensors metadata.")
+    else:
+        location = st.selectbox(
+            "Choose location",
+            options=locations,
+            index=0,
+            key="trend_loc_on_map_page",
+            help="This list comes from the sensors Excel file (Locatienaam)."
+        )
+
+        # time window for the chart (whole event OR current range)
+        if use_whole_event:
+            _start, _end = flow_long["_t"].min(), flow_long["_t"].max()
+        else:
+            _start, _end = selected_start, selected_end  # from your range slider
+
+        # sensors at that location -> join_keys
+        loc_keys = sensors.loc[sensors["location_name"] == location, "join_key"].tolist()
+
+        # build series + aggregate (handles multi-sensor locations)
+        detail_df = flow_long.loc[
+            (flow_long["join_key"].isin(loc_keys)) &
+            (flow_long["_t"] >= _start) & (flow_long["_t"] <= _end),
+            ["_t", "value"]
+        ].copy()
+
+        if detail_df.empty:
+            st.info("No data found for this location in the selected period.")
+        else:
+            detail_agg = (detail_df.groupby("_t", as_index=False)["value"]
+                                  .sum()
+                                  .sort_values("_t"))
+
+            # KPI: Now vs 24h avg (ending at _end)
+            now_val = float(detail_agg["value"].iloc[-1])
+            _24h_start = _end - pd.Timedelta(hours=24)
+            df24 = flow_long.loc[
+                (flow_long["join_key"].isin(loc_keys)) &
+                (flow_long["_t"] >= _24h_start) & (flow_long["_t"] <= _end),
+                ["_t","value"]
+            ]
+            avg24 = float(df24["value"].mean()) if not df24.empty else 0.0
+
+            # chart (Plotly if available, otherwise Altair)
+            try:
+                import plotly.express as px
+                fig = px.line(
+                    detail_agg, x="_t", y="value",
+                    labels={"_t": "Time", "value": "Flow Count"},
+                    title=f"{location} — People over Time"
+                )
+                fig.update_layout(height=420, margin=dict(l=10, r=10, b=10, t=50))
+                st.plotly_chart(fig, use_container_width=True)
+            except ModuleNotFoundError:
+                import altair as alt
+                chart = (
+                    alt.Chart(detail_agg)
+                       .mark_line()
+                       .encode(
+                           x=alt.X("_t:T", title="Time"),
+                           y=alt.Y("value:Q", title="Flow Count"),
+                           tooltip=["_t:T", "value:Q"]
+                       )
+                       .properties(title=f"{location} — People over Time", height=420)
+                )
+                st.altair_chart(chart, use_container_width=True)
+
+            # KPI pill below chart
+            import streamlit.components.v1 as components
+            delta_val = now_val - avg24
+            delta_color = "#2ECC71" if delta_val >= 0 else "#E74C3C"
+            kpi_html = f"""
+            <div style="display:flex;flex-direction:column;align-items:flex-start;margin-top:1rem;">
+              <div style="font-size:2.0rem;font-weight:600;color:white;">{now_val:,.2f}</div>
+              <div style="color:{delta_color};background-color:{delta_color}20;
+                          padding:.25rem .6rem;border-radius:8px;font-size:.9rem;margin-top:.3rem;">
+                {'▲' if delta_val>=0 else '▼'} {delta_val:,.2f} vs 24 h avg
+              </div>
+            </div>
+            """
+            components.html(kpi_html, height=90)
+
+            # caption that respects whole-event mode
+            if use_whole_event:
+                st.caption(f"{location} • whole event {_start:%Y-%m-%d %H:%M} → {_end:%Y-%m-%d %H:%M} "
+                           f"(points: {len(detail_agg):,})")
+            else:
+                st.caption(f"{location} • range {_start:%Y-%m-%d %H:%M} → {_end:%H:%M} "
+                           f"(points: {len(detail_agg):,})")
+
 
 # ---- KPIs (UNCHANGED) ----
 total_people      = int(bubbles_df["count"].sum())
