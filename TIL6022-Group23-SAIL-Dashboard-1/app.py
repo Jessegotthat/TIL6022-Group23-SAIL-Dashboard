@@ -10,6 +10,12 @@ import pandas as pd
 import streamlit as st
 import folium
 from folium.plugins import HeatMap
+try:
+    from streamlit_folium import st_folium
+    _USE_ST_FOLIUM = True
+except Exception:
+    _USE_ST_FOLIUM = False
+
 
 # ---------------- CONFIG ----------------
 BASE_DIR = Path(__file__).parent
@@ -181,12 +187,15 @@ def add_bubbles(m: folium.Map, df: pd.DataFrame, selected_dt: datetime, window_m
         </div>
         """
         folium.Marker(
-            location=[float(r["_lat"]), float(r["_lon"])],
-            icon=folium.DivIcon(html=html),
-            tooltip=(f"{r['location_name']}<br>"
-                     f"<b>Count:</b> {count}<br>"
-                     f"<b>Time:</b> {selected_dt:%Y-%m-%d %H:%M} (±{window_minutes}m)")
-        ).add_to(m)
+    location=[float(r["_lat"]), float(r["_lon"])],
+    icon=folium.DivIcon(html=html),
+    tooltip=(f"{r['location_name']}<br>"
+             f"<b>Count:</b> {count}<br>"
+             f"<b>Time:</b> {selected_dt:%Y-%m-%d %H:%M} (±{window_minutes}m)"),
+
+    popup=folium.Popup(str(r["location_name"]), max_width=180),
+).add_to(m)
+
 
 def add_heatmap(m: folium.Map, df: pd.DataFrame, radius_px: int) -> None:
     pts = [[float(r["_lat"]), float(r["_lon"]), float(r["count"])] for _, r in df.iterrows() if r["count"] > 0]
@@ -577,17 +586,7 @@ if st.session_state.page == "timelapse":
 
     # Render the Leaflet map in Streamlit
     st.components.v1.html(m.get_root().render(), height=650)
-
-    # Optional: download the animation frame data
-    with st.expander("Export frame data (CSV)"):
-        st.download_button(
-            "Download CSV",
-            data=df_frames.to_csv(index=False).encode("utf-8"),
-            file_name=f"timelapse_{selected_date:%Y%m%d}.csv",
-            mime="text/csv"
-        )
-
-    st.stop()
+st.stop()
 # ====================================================================
 
 # ====================================================================
@@ -601,7 +600,31 @@ with left_col:
         add_heatmap(m, bubbles_df, radius_px=heat_radius_px)
     if viz_mode in ("Bubbles", "Both"):
         add_bubbles(m, bubbles_df, selected_dt, window_minutes)
-    st.components.v1.html(m.get_root().render(), height=650)
+
+    if _USE_ST_FOLIUM:
+        # Render Folium map and capture interactions
+        map_state = st_folium(m, height=650, width=None)
+
+        # Read popup text from the last clicked object
+        clicked_name = None
+        if isinstance(map_state, dict):
+            pop = map_state.get("last_object_clicked_popup")
+            if isinstance(pop, dict):
+                clicked_name = pop.get("content")
+            elif isinstance(pop, str):
+                clicked_name = pop
+
+        # Persist clicked location (if any)
+        if clicked_name:
+            if st.session_state.get("clicked_location") != clicked_name:
+                st.session_state["clicked_location"] = clicked_name
+                st.rerun() 
+
+
+    else:
+        # Fallback when streamlit-folium isn't available
+        st.components.v1.html(m.get_root().render(), height=650)
+
 
 with right_col:
     st.subheader("Trend by Location")
@@ -610,17 +633,25 @@ with right_col:
     use_whole_event = st.session_state.get("use_whole_event", False)
 
     # location picker (by location name, not sensor code)
-    locations = sensors["location_name"].dropna().sort_values().unique().tolist()
-    if not locations:
-        st.warning("No locations available in sensors metadata.")
-    else:
-        location = st.selectbox(
-            "Choose location",
-            options=locations,
-            index=0,
-            key="trend_loc_on_map_page",
-            help="This list comes from the sensors Excel file (Locatienaam)."
-        )
+    # location picker (by location name, not sensor code)
+locations = sensors["location_name"].dropna().sort_values().unique().tolist()
+if not locations:
+    st.warning("No locations available in sensors metadata.")
+else:
+    clicked_loc = st.session_state.get("clicked_location")
+    default_idx = locations.index(clicked_loc) if clicked_loc in locations else 0
+
+    location = st.selectbox(
+        "Choose location",
+        options=locations,
+        index=default_idx,                     # <-- use the computed default
+        key="trend_loc_on_map_page",
+        help="Tip: click a bubble on the map to jump here."
+    )
+
+    if clicked_loc and clicked_loc == location:
+        st.caption(f"📍 Selected from map: **{clicked_loc}**")
+
 
         # time window for the chart (whole event OR current range)
         if use_whole_event:
