@@ -234,15 +234,23 @@ def add_bubbles(m: folium.Map, df: pd.DataFrame, selected_dt: datetime, window_m
         </div>
         """
         folium.Marker(
-            location=[float(r["_lat"]), float(r["_lon"])],
-            icon=folium.DivIcon(html=html),  # styled bubble
-            tooltip=(
-                f"{r['location_name']}<br>"
-                f"<b>Count:</b> {count}<br>"
-                f"<b>Time:</b> {selected_dt:%Y-%m-%d %H:%M} (±{window_minutes}m)"
-            ),
-            popup=folium.Popup(str(r["location_name"]), max_width=180),
-        ).add_to(m)
+            location=[lat, lon],
+            icon=folium.DivIcon(
+                html=f"""
+                    <div style="
+                        font-size: 10px;           /* smaller font */
+                        font-weight: 600;
+                        color: #222;
+                        text-align: center;
+                        line-height: 1;
+                        transform: translate(-50%, -50%);
+                    ">
+                        {count}
+                    </div>
+                """
+            )
+).add_to(m)
+
 
 def add_heatmap(m: folium.Map, df: pd.DataFrame, radius_px: int) -> None:
     pts = [[float(r["_lat"]), float(r["_lon"]), float(r["count"])] for _, r in df.iterrows() if r["count"] > 0]
