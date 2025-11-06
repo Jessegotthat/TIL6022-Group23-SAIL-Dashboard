@@ -510,11 +510,9 @@ if st.session_state.page == "timelapse":
 
     st.header("▶️ Time-lapse — People pattern over time (Folium)")
 
-    viz_choice = st.radio(
-        "Animation style",
-        ["Bubbles (like Map)", "Heatmap (like Map)"],
-        horizontal=True
-    )
+    # Use the same visualization mode as sidebar (Map page)
+    timelapse_mode = "Heatmap" if viz_mode in ("Heatmap", "Both") else "Bubbles"
+
     use_current_range = st.checkbox(
         "Use current time range only",
         value=False,
@@ -552,7 +550,7 @@ if st.session_state.page == "timelapse":
     frame_times  = df_frames["_t"].drop_duplicates().tolist()
     frame_labels = [t.strftime("%H:%M") for t in frame_times]
 
-    if viz_choice.startswith("Heatmap"):
+    if timelapse_mode.startswith("Heatmap"):
         # Build frames with GLOBAL scaling so colors match Map page behavior
         frames = build_heatmap_frames_global(flow_long, sensors, frame_times)
 
@@ -569,9 +567,8 @@ if st.session_state.page == "timelapse":
             index=[t.strftime("%H:%M") for t in frame_times],
             radius=heat_radius_px,
             auto_play=False,
-            loop=False,
             max_opacity=0.9,
-            use_local_extrema=False,  # do NOT rescale per frame
+            use_local_extrema=False,
             gradient=gradient,
         ).add_to(m)
 
