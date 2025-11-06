@@ -376,6 +376,32 @@ else:
         f"{selected_end:%H:%M} (midpoint {selected_dt:%H:%M}, ±{window_minutes} min)"
     )
 
+def agg_window(long_df: pd.DataFrame, selected_dt: datetime, window_minutes: int) -> pd.DataFrame:
+    """
+    Sum values per sensor (join_key) within ±window_minutes around selected_dt.
+    Returns columns: join_key, value_sum
+    """
+    start = selected_dt - timedelta(minutes=window_minutes)
+    end   = selected_dt + timedelta(minutes=window_minutes)
+
+    # ensure timezone-naive comparison
+    ts = long_df["_t"]
+    if pd.api.types.is_datetime64tz_dtype(ts):
+        long_df = long_df.copy()
+        long_df["_t"] = ts.dt.tz_localize(None)
+        ts = long_df["_t"]
+
+    sub = long_df.loc[(ts >= start) & (ts <= end), ["join_key", "value"]]
+    if sub.empty:
+        return pd.DataFrame({"join_key": [], "value_sum": []})
+
+    out = (
+        sub.groupby("join_key", as_index=False)["value"]
+           .sum()
+           .rename(columns={"value": "value_sum"})
+    )
+    return out
+
 # ---- Aggregate + join ----
 flow_agg   = agg_window(flow_long, selected_dt, window_minutes)
 bubbles_df = sensors.merge(flow_agg, on="join_key", how="left")
