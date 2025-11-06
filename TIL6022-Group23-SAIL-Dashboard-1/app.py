@@ -1,6 +1,7 @@
-# app.py — SAIL Sensors — Map, Sensor Details, and Time-lapse
+# app.py — SAIL Sensors — Map, Sensor Details, and Time-lapse (map-page timelapse added)
 
 import re
+import time
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -185,7 +186,7 @@ def add_bubbles(m: folium.Map, df: pd.DataFrame, selected_dt: datetime, window_m
     for _, r in df.iterrows():
         count = int(r["count"])
         color = _bubble_color(count)
-        radius = 14 if high == low else int(14 + 28 * (count - low) / max(1, (high - low)))
+        radius = 18 if high == low else int(18 + 36 * (count - low) / max(1, (high - low)))
         html = f"""
         <div style="
             width:{radius*2}px;height:{radius*2}px;border-radius:50%;
@@ -195,7 +196,6 @@ def add_bubbles(m: folium.Map, df: pd.DataFrame, selected_dt: datetime, window_m
             font-size:{max(0.6, min(1.4, radius/20))}rem;
             box-shadow:0 2px 8px rgba(0,0,0,0.25);">
             {count}
-
         </div>
         """
         folium.Marker(
@@ -206,7 +206,6 @@ def add_bubbles(m: folium.Map, df: pd.DataFrame, selected_dt: datetime, window_m
                 f"<b>Count:</b> {count}<br>"
                 f"<b>Time:</b> {selected_dt:%Y-%m-%d %H:%M} (±{window_minutes}m)"
             ),
-            # carry the location name so clicks can select the chart
             popup=folium.Popup(str(r["location_name"]), max_width=180),
         ).add_to(m)
 
@@ -214,7 +213,7 @@ def add_bubbles(m: folium.Map, df: pd.DataFrame, selected_dt: datetime, window_m
 def add_heatmap(m: folium.Map, df: pd.DataFrame, radius_px: int) -> None:
     pts = [[float(r["_lat"]), float(r["_lon"]), float(r["count"])] for _, r in df.iterrows() if r["count"] > 0]
     if pts:
-        HeatMap(pts, radius=radius_px, blur=radius_px*0.6, max_zoom=16).add_to(m)
+        HeatMap(pts, radius=radius_px, blur=int(radius_px*0.6), max_zoom=16).add_to(m)
 
 
 # ---------------- UI ----------------
@@ -268,15 +267,36 @@ with c1:
         format_func=lambda d: d.strftime("%Y-%m-%d"),
     )
 
-    use_whole_event = st.checkbox(
-        "Show whole event (all dates)",
-        value=False,
-        help="Use all data from all days instead of a single date."
-    )
-    st.session_state["use_whole_event"] = use_whole_event
+    # --- Whole-event + Play/Pause + FPS on one row (ADD) ---
+    row_left, row_mid, row_right = st.columns([0.65, 0.18, 0.17])
+
+    with row_left:
+        use_whole_event = st.checkbox(
+            "Show whole event (all dates)",
+            value=st.session_state.get("use_whole_event", False),
+            help="Use all data from all days instead of a single date."
+        )
+        st.session_state["use_whole_event"] = use_whole_event
+
+    with row_mid:
+        playing = st.session_state.get("anim_play", False)
+        if st.button("⏯ Play" if not playing else "⏸ Pause", use_container_width=True, key="btn_playpause"):
+            st.session_state["anim_play"] = not playing
+            if not playing:
+                st.session_state["anim_idx"] = 0  # (re)start
+
+    with row_right:
+        fps = st.slider(
+            "fps",
+            1, 20,
+            st.session_state.get("anim_fps", 6),
+            label_visibility="collapsed",
+            key="anim_fps_slider"
+        )
+        st.session_state["anim_fps"] = fps
 
 # ---- Time slider (time-only label; values are naive datetimes) ----
-if use_whole_event:
+if st.session_state.get("use_whole_event", False):
     day_mask = flow_long["_t"].notna()
 else:
     day_mask = flow_long["_t"].dt.date == selected_date
@@ -295,6 +315,19 @@ if len(day_times) == 0:
 t_min = pd.Timestamp(day_times[0]).to_pydatetime()
 t_max = pd.Timestamp(day_times[-1]).to_pydatetime()
 
+# --- Time-lapse frames (ADD; respect whole-event toggle) ---
+if st.session_state.get("use_whole_event", False):
+    tl_mask = flow_long["_t"].notna()
+else:
+    tl_mask = (flow_long["_t"].dt.date == selected_date)
+
+tl_times = (flow_long.loc[tl_mask, "_t"]
+            .dropna()
+            .sort_values()
+            .unique()
+            .tolist())
+st.session_state["tl_len"] = len(tl_times)
+
 # If only one time, pad so min < max (Streamlit requirement)
 if t_min == t_max:
     t_min = t_min - timedelta(minutes=3)
@@ -308,7 +341,6 @@ else:
     default_dt = min(max(pd.Timestamp(day_times[mid_idx]).to_pydatetime(), t_min), t_max)
 
 # ---- Time range slider (replaces the single time slider) ----
-# Use your existing default_dt to build a sensible default range
 range_start_default = max(t_min, default_dt - timedelta(minutes=window_minutes))
 range_end_default   = min(t_max, default_dt + timedelta(minutes=window_minutes))
 
@@ -328,7 +360,7 @@ selected_dt = selected_start + (selected_end - selected_start) / 2
 window_minutes = int(((selected_end - selected_start).total_seconds() / 60) / 2)
 
 # ---- Caption + optional WHOLE-EVENT override ----
-if use_whole_event:
+if st.session_state.get("use_whole_event", False):
     selected_start = pd.Timestamp(flow_long["_t"].min()).to_pydatetime()
     selected_end   = pd.Timestamp(flow_long["_t"].max()).to_pydatetime()
 
@@ -345,6 +377,17 @@ else:
         f"{selected_end:%H:%M} (midpoint {selected_dt:%H:%M}, ±{window_minutes} min)"
     )
 
+# --- When playing: drive the map by the current frame (ADD) ---
+if st.session_state.get("anim_play", False) and st.session_state.get("tl_len", 0) > 0:
+    idx = st.session_state.get("anim_idx", 0)
+    frame_dt = pd.Timestamp(tl_times[idx]).to_pydatetime()
+
+    selected_dt = frame_dt
+    selected_start = max(flow_long["_t"].min().to_pydatetime(), frame_dt - timedelta(minutes=window_minutes))
+    selected_end   = min(flow_long["_t"].max().to_pydatetime(), frame_dt + timedelta(minutes=window_minutes))
+
+    st.caption(f"▶️ Time-lapse: {frame_dt:%Y-%m-%d %H:%M} (fps {st.session_state.get('anim_fps', 6)})")
+
 # ---- Aggregate + join ----
 flow_agg   = agg_window(flow_long, selected_dt, window_minutes)
 bubbles_df = sensors.merge(flow_agg, on="join_key", how="left")
@@ -357,7 +400,6 @@ if st.session_state.page == "details":
     st.header("📈 Sensor Details")
     st.subheader("Trend by Location")
 
-    # Check if the "whole event" mode is active (carried from the map page)
     use_whole_event = st.session_state.get("use_whole_event", False)
 
     if "location_name" not in sensors.columns:
@@ -369,37 +411,38 @@ if st.session_state.page == "details":
         st.warning("No locations available in sensors metadata.")
         st.stop()
 
-    location = st.selectbox(
-        "Choose location",
-        options=locations,
-        index=0,
-        help="This list comes from the sensors Excel file (Locatienaam)."
-    )
+    # Location selection driven by map click; fallback to highest count
+    clicked_loc = st.session_state.get("clicked_location")
+    if clicked_loc in locations:
+        location = clicked_loc
+        st.caption(f"📍 Selected from map: **{location}**")
+    else:
+        if not bubbles_df.empty:
+            location = bubbles_df.sort_values("count", ascending=False)["location_name"].iloc[0]
+        else:
+            location = locations[0]
+        st.caption("Tip: click a bubble on the map to choose a location.")
 
-    # Sensor(s) for that location → join_keys
-    loc_keys = sensors.loc[sensors["location_name"] == location, "join_key"].tolist()
-
-    # Pull time series from already-loaded flow_long
-    detail_df = flow_long.loc[flow_long["join_key"].isin(loc_keys), ["_t", "value"]].copy()
-    if detail_df.empty:
-        st.warning("No data found for this location in the flow file.")
-        st.stop()
-
-    # Filter by current time range (if available)
+    # Time window for detail chart
     if use_whole_event:
         _start, _end = flow_long["_t"].min(), flow_long["_t"].max()
     else:
         _start, _end = selected_start, selected_end
 
-    detail_df = detail_df[(detail_df["_t"] >= _start) & (detail_df["_t"] <= _end)]
+    # Join keys and series
+    loc_keys = sensors.loc[sensors["location_name"] == location, "join_key"].tolist()
+    detail_df = flow_long.loc[flow_long["join_key"].isin(loc_keys), ["_t", "value"]].copy()
+    if detail_df.empty:
+        st.warning("No data found for this location in the flow file.")
+        st.stop()
 
-    # Aggregate by timestamp (sum if multiple sensors share a location)
+    detail_df = detail_df[(detail_df["_t"] >= _start) & (detail_df["_t"] <= _end)]
     detail_agg = (
         detail_df.groupby("_t", as_index=False)["value"].sum()
                  .sort_values("_t")
     )
 
-    # ---- KPI: Now vs 24h avg ----
+    # KPI: Now vs 24h avg
     now_val = float(detail_agg["value"].iloc[-1]) if not detail_agg.empty else 0.0
     _24h_start = _end - pd.Timedelta(hours=24)
     df24 = flow_long.loc[
@@ -409,9 +452,8 @@ if st.session_state.page == "details":
     ]
     avg24 = float(df24["value"].mean()) if not df24.empty else 0.0
 
-    # ---- Plot (Plotly or fallback to Altair) ----
+    # Plot
     try:
-        import plotly.express as px
         fig = px.line(
             detail_agg,
             x="_t",
@@ -435,7 +477,7 @@ if st.session_state.page == "details":
         )
         st.altair_chart(chart, use_container_width=True)
 
-    # ---- KPI box below chart ----
+    # KPI pill
     import streamlit.components.v1 as components
     delta_val = now_val - avg24
     delta_color = "#2ECC71" if delta_val >= 0 else "#E74C3C"
@@ -460,14 +502,12 @@ if st.session_state.page == "details":
     st.stop()  # stop before map for this page
 
 
-# ===================== TIME-LAPSE PAGE ======================
+# ===================== TIME-LAPSE PAGE (original, kept) ======================
 if st.session_state.page == "timelapse":
-    import pandas as pd
     from folium.plugins import HeatMapWithTime, TimestampedGeoJson
 
     st.header("▶️ Time-lapse — People pattern over time (Folium)")
 
-    # Controls for the timelapse page
     viz_choice = st.radio(
         "Animation style",
         ["Bubbles (like Map)", "Heatmap (like Map)"],
@@ -479,11 +519,9 @@ if st.session_state.page == "timelapse":
         help="If off, animates the full selected date."
     )
 
-    # Build the animation window
     if use_current_range:
         ani_start, ani_end = selected_start, selected_end
     else:
-        # animate the full selected day (clipped to data availability)
         mask_day = (flow_long["_t"].dt.date == selected_date)
         if mask_day.any():
             day_times = flow_long.loc[mask_day, "_t"].sort_values()
@@ -491,7 +529,6 @@ if st.session_state.page == "timelapse":
         else:
             ani_start, ani_end = selected_start, selected_end
 
-    # Prepare per-frame data: sum per sensor per timestamp, then join coords
     df_frames = (
         flow_long.loc[
             (flow_long["_t"] >= ani_start) & (flow_long["_t"] <= ani_end),
@@ -507,15 +544,11 @@ if st.session_state.page == "timelapse":
         st.warning("No data available for the selected period.")
         st.stop()
 
-    # Create a base Folium map identical to your Map page
     m = make_base_map(sensors)
-
-    # A tidy list of frame labels (e.g., '08:15')
     frame_times = df_frames["_t"].drop_duplicates().tolist()
     frame_labels = [t.strftime("%H:%M") for t in frame_times]
 
     if viz_choice.startswith("Heatmap"):
-        # -------- HeatmapWithTime --------
         frames = []
         for t in frame_times:
             dt = df_frames.loc[df_frames["_t"] == t]
@@ -532,7 +565,6 @@ if st.session_state.page == "timelapse":
         ).add_to(m)
 
     else:
-        # -------- TimestampedGeoJson (animated bubbles) --------
         vmin = float(df_frames["value"].min())
         vmax = float(df_frames["value"].max())
 
@@ -582,7 +614,7 @@ if st.session_state.page == "timelapse":
             add_last_point=False,
             auto_play=False,
             loop=False,
-            period="PT3M"  # your data are 3-minute steps
+            period="PT3M"
         ).add_to(m)
 
     st.caption(
@@ -590,7 +622,6 @@ if st.session_state.page == "timelapse":
         f"({len(frame_times)} frames)"
     )
 
-    # Render the Leaflet map in Streamlit
     st.components.v1.html(m.get_root().render(), height=650)
     st.stop()
 
@@ -626,7 +657,6 @@ with left_col:
         st.components.v1.html(m.get_root().render(), height=650)
 
 # ---------------- RIGHT: TREND (driven by selection/click) ----------------
-# ---------------- RIGHT: TREND (driven only by map click) ----------------
 with right_col:
     st.subheader("Trend by Location")
 
@@ -636,31 +666,25 @@ with right_col:
     if not locations:
         st.warning("No locations available in sensors metadata.")
     else:
-        # location comes from the map click; fall back to the top-count location
         clicked_loc = st.session_state.get("clicked_location")
         if clicked_loc in locations:
             location = clicked_loc
-            st.caption(f"📍 Selected from map: **{location}**")
+            st.caption(f"Tip: click a bubble on the map to choose a location.")
+            st.caption(f"📍 Selected from map: **{clicked_loc}**")
         else:
-            # auto-pick the location with highest count in current window
             if not bubbles_df.empty:
-                location = (
-                    bubbles_df.sort_values("count", ascending=False)["location_name"].iloc[0]
-                )
+                location = bubbles_df.sort_values("count", ascending=False)["location_name"].iloc[0]
             else:
                 location = locations[0]
             st.caption("Tip: click a bubble on the map to choose a location.")
 
-        # pick the time window
         if use_whole_event:
             _start, _end = flow_long["_t"].min(), flow_long["_t"].max()
         else:
             _start, _end = selected_start, selected_end
 
-        # join keys for that location
         loc_keys = sensors.loc[sensors["location_name"] == location, "join_key"].tolist()
 
-        # filter the time series
         detail_df = flow_long.loc[
             (flow_long["join_key"].isin(loc_keys)) &
             (flow_long["_t"] >= _start) & (flow_long["_t"] <= _end),
@@ -676,7 +700,6 @@ with right_col:
                          .sort_values("_t")
             )
 
-            # KPI: now vs 24h avg
             now_val = float(detail_agg["value"].iloc[-1])
             _24h_start = _end - pd.Timedelta(hours=24)
             df24 = flow_long.loc[
@@ -686,9 +709,7 @@ with right_col:
             ]
             avg24 = float(df24["value"].mean()) if not df24.empty else 0.0
 
-            # chart
             try:
-                import plotly.express as px
                 fig = px.line(
                     detail_agg, x="_t", y="value",
                     labels={"_t": "Time", "value": "Flow Count"},
@@ -710,7 +731,6 @@ with right_col:
                 )
                 st.altair_chart(chart, use_container_width=True)
 
-            # KPI pill
             import streamlit.components.v1 as components
             delta_val = now_val - avg24
             delta_color = "#2ECC71" if delta_val >= 0 else "#E74C3C"
@@ -725,7 +745,6 @@ with right_col:
             """
             components.html(kpi_html, height=90)
 
-            # caption
             if use_whole_event:
                 st.caption(
                     f"{location} • whole event "
@@ -738,7 +757,6 @@ with right_col:
                     f"(points: {len(detail_agg):,})"
                 )
 
-
 # ---- KPIs ----
 total_people      = int(bubbles_df["count"].sum())
 sensors_with_data = int((bubbles_df["count"] > 0).sum())
@@ -746,3 +764,11 @@ k1, k2, k3 = st.columns(3)
 k1.metric("📍 Sensors plotted", f"{len(sensors)}")
 k2.metric("📊 Sensors w/ data", f"{sensors_with_data}")
 k3.metric("👥 Total people (window)", f"{total_people}")
+
+# --- Advance the time-lapse if playing (ADD) ---
+if st.session_state.get("anim_play", False) and st.session_state.get("tl_len", 0) > 0:
+    idx = st.session_state.get("anim_idx", 0)
+    n   = st.session_state["tl_len"]
+    time.sleep(1.0 / max(1, st.session_state.get("anim_fps", 6)))
+    st.session_state["anim_idx"] = (idx + 1) % n
+    st.rerun()
