@@ -139,6 +139,44 @@ def load_flow_wide_to_long(path: Path) -> pd.DataFrame:
 
     return long_df
 
+@st.cache_data(show_spinner=False)
+def build_heatmap_frames_global(flow_long: pd.DataFrame, sensors: pd.DataFrame, times):
+    """
+    Build HeatMapWithTime frames using a global reference so colors match the static map:
+    small values -> blue, larger -> green/yellow/orange/red.
+    """
+    frames_raw = []
+    all_vals = []
+
+    for t in times:
+        dt = flow_long.loc[flow_long["_t"] == pd.Timestamp(t), ["join_key", "value"]]
+        if dt.empty:
+            frames_raw.append([])
+            continue
+
+        per_sensor = (
+            dt.groupby("join_key", as_index=False)["value"].sum()
+              .merge(sensors[["join_key", "_lat", "_lon"]], on="join_key", how="left")
+              .dropna(subset=["_lat", "_lon"])
+        )
+
+        pts = [[float(r["_lat"]), float(r["_lon"]), float(r["value"])]
+               for _, r in per_sensor.iterrows() if r["value"] > 0]
+        frames_raw.append(pts)
+        all_vals.extend([p[2] for p in pts])
+
+    if len(all_vals) == 0:
+        return frames_raw
+
+    ref = float(np.percentile(all_vals, 99))  # robust global max
+    ref = max(ref, 1.0)
+
+    frames = []
+    for pts in frames_raw:
+        frames.append([[lat, lon, val / ref] for (lat, lon, val) in pts])
+
+    return frames
+
 def agg_window(long_df: pd.DataFrame, selected_dt: datetime, window_minutes: int) -> pd.DataFrame:
     """Sum values per join_key within ±window minutes around selected_dt."""
     start = selected_dt - timedelta(minutes=window_minutes)
@@ -500,41 +538,53 @@ if st.session_state.page == "timelapse":
     frame_times = df_frames["_t"].drop_duplicates().tolist()
     frame_labels = [t.strftime("%H:%M") for t in frame_times]
 
-    if viz_choice.startswith("Heatmap"):
-        # -------- HeatmapWithTime --------
-        frames = []
-        for t in frame_times:
-            dt = df_frames.loc[df_frames["_t"] == t]
-            frames.append([[float(r["_lat"]), float(r["_lon"]), float(r["value"])]
-                           for _, r in dt.iterrows() if r["value"] > 0])
+if viz_choice.startswith("Heatmap"):
+    from folium.plugins import HeatMapWithTime
 
-        HeatMapWithTime(
-            frames,
-            index=frame_labels,
-            radius=heat_radius_px,
-            auto_play=False,
-            max_opacity=0.9,
-            use_local_extrema=False
-        ).add_to(m)
+    # Build frame times (you already have frame_times above)
+    # Use the same list: frame_times = df_frames["_t"].drop_duplicates().tolist()
 
-    else:
+    # Build frames with GLOBAL scaling so colors match Map page behavior
+    frames = build_heatmap_frames_global(flow_long, sensors, frame_times)
+
+    # Optional gradient similar to your static look (can remove if you prefer default)
+    gradient = {
+            0.00: '#0000ff',  # blue
+            0.25: '#33a3ff',
+            0.50: '#33ff57',  # green
+            0.75: '#ffd43b',  # yellow
+            1.00: '#ff3b30',  # red
+    }
+
+    HeatMapWithTime(
+        frames,
+        index=[t.strftime("%H:%M") for t in frame_times],
+        radius=heat_radius_px,
+        auto_play=False,         # keep your existing controls
+        loop=False,
+        max_opacity=0.9,
+        use_local_extrema=False, # << KEY: do NOT rescale per frame
+        gradient=gradient,       # optional; matches your static feel
+    ).add_to(m)
+
+else:
         # -------- TimestampedGeoJson (animated bubbles) --------
-        vmin = float(df_frames["value"].min())
-        vmax = float(df_frames["value"].max())
+    vmin = float(df_frames["value"].min())
+    vmax = float(df_frames["value"].max())
 
-        def _radius_from_value(v: float) -> int:
+    def _radius_from_value(v: float) -> int:
             if vmax == vmin:
                 return 18
             return int(18 + 36 * (v - vmin) / max(1.0, (vmax - vmin)))
 
-        features = []
-        for t in frame_times:
-            dt = df_frames.loc[df_frames["_t"] == t]
-            for _, r in dt.iterrows():
-                val = float(r["value"])
-                color = _bubble_color(val)
-                rad = _radius_from_value(val)
-                features.append({
+    features = []
+    for t in frame_times:
+        dt = df_frames.loc[df_frames["_t"] == t]
+        for _, r in dt.iterrows():
+            val = float(r["value"])
+            color = _bubble_color(val)
+            rad = _radius_from_value(val)
+            features.append({
                     "type": "Feature",
                     "geometry": {
                         "type": "Point",
