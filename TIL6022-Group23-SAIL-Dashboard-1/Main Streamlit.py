@@ -1,5 +1,11 @@
-# Main Streamlit.py
 import streamlit as st
+import sys
+from pathlib import Path
+
+# Add the "Streamlit Dashboard" folder to Python's path
+sys.path.append(str(Path(__file__).parent / "Streamlit Dashboard"))
+
+# Import the dashboards from inside the folder
 import app
 import streamlit_chart_dashboard_v2 as charts
 
