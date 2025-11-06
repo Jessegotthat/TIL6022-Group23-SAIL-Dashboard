@@ -5,9 +5,11 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 
+def run():
+
 # ---------- PATHS ----------
-CROWD_XLSX = r"C:\Users\muham\github-classroom\TIL6022-Group23-SAIL-Dashboard\Combined_Crowd_Data.xlsx"
-VESSEL_PARQUET = r"C:\Users\muham\github-classroom\TIL6022-Group23-SAIL-Dashboard\Vesselposition_data_20-24Aug2025.parquet"
+    CROWD_XLSX = r"C:\Users\muham\github-classroom\TIL6022-Group23-SAIL-Dashboard\Combined_Crowd_Data.xlsx"
+    VESSEL_PARQUET = r"C:\Users\muham\github-classroom\TIL6022-Group23-SAIL-Dashboard\Vesselposition_data_20-24Aug2025.parquet"
 
 # ---------- CONSTANTS ----------
 # Overall vessel date window (inclusive start, exclusive end)
@@ -46,6 +48,8 @@ def donut(value: int, total: int, title: str, main_color: str, remainder_color="
         ],
     )
     return fig
+
+st.title("Chart Dashboard")
 
 
 def red_heat_colors(vals: np.ndarray) -> list:
@@ -249,3 +253,6 @@ fig_area.update_layout(
 st.plotly_chart(fig_area, use_container_width=True)
 
 st.caption("Tip: adjust Date/Start/End above and press Update. Donuts compare current vs total (grey).")
+
+if __name__ == "__main__":
+    run()

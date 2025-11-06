@@ -1,5 +1,3 @@
-# app.py — SAIL Sensors — Map, Sensor Details, and Time-lapse
-
 import re
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -17,12 +15,13 @@ try:
 except Exception:
     _USE_ST_FOLIUM = False
 
+def run():
 # ---------------- CONFIG ----------------
-BASE_DIR = Path(__file__).parent
-SENSORS_XLSX = BASE_DIR / "Sensor Location Data.xlsx"
-FLOW_CSV     = BASE_DIR / "SAIL2025_LVMA_data_3min_20August-25August2025_flow.csv"
-CITY_CENTER  = [52.377956, 4.897070]  # Amsterdam fallback center
-DEFAULT_WINDOW_MIN = 15
+    BASE_DIR = Path(__file__).parent
+    SENSORS_XLSX = BASE_DIR / "Sensor Location Data.xlsx"
+    FLOW_CSV     = BASE_DIR / "SAIL2025_LVMA_data_3min_20August-25August2025_flow.csv"
+    CITY_CENTER  = [52.377956, 4.897070]  # Amsterdam fallback center
+    DEFAULT_WINDOW_MIN = 15
 
 st.set_page_config(page_title="SAIL Sensors — Per-Sensor Counts & Heatmap", layout="wide")
 
@@ -770,3 +769,6 @@ k1, k2, k3 = st.columns(3)
 k1.metric("📍 Sensors plotted", f"{len(sensors)}")
 k2.metric("📊 Sensors w/ data", f"{sensors_with_data}")
 k3.metric("👥 Total people (window)", f"{total_people}")
+
+if __name__ == "__main__":
+    run()
