@@ -179,8 +179,6 @@ def build_heatmap_frames_global(flow_long: pd.DataFrame, sensors: pd.DataFrame, 
     return frames
 
 # ---------------- LATEST NONZERO DATETIME ----------------
-from datetime import datetime  # you likely already have this; harmless if duplicated
-
 def latest_nonzero_dt(long_df: pd.DataFrame) -> datetime:
     """
     Return the most recent timestamp where total flow across all sensors > 0.
