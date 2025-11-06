@@ -1,7 +1,6 @@
 import re
 from pathlib import Path
 from datetime import datetime, timedelta
-
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -15,270 +14,173 @@ try:
 except Exception:
     _USE_ST_FOLIUM = False
 
+
+# ============================================================
+# MAIN FUNCTION
+# ============================================================
 def run():
-# ---------------- CONFIG ----------------
+    # ---------------- CONFIG ----------------
     BASE_DIR = Path(__file__).parent
     SENSORS_XLSX = BASE_DIR / "Sensor Location Data.xlsx"
-    FLOW_CSV     = BASE_DIR / "SAIL2025_LVMA_data_3min_20August-25August2025_flow.csv"
-    CITY_CENTER  = [52.377956, 4.897070]  # Amsterdam fallback center
+    FLOW_CSV = BASE_DIR / "SAIL2025_LVMA_data_3min_20August-25August2025_flow.csv"
+    CITY_CENTER = [52.377956, 4.897070]  # Amsterdam fallback center
     DEFAULT_WINDOW_MIN = 15
 
-st.set_page_config(page_title="SAIL Sensors — Per-Sensor Counts & Heatmap", layout="wide")
+    # ---------------- SIMPLE PAGE ROUTER ----------------
+    if "page" not in st.session_state:
+        st.session_state.page = "map"
 
-# ---------------- SIMPLE PAGE ROUTER ----------------
-if "page" not in st.session_state:
-    st.session_state.page = "map"
-# ----------------------------------------------------
+    # ============================================================
+    # HELPERS
+    # ============================================================
+    def _norm(s: str) -> str:
+        s = str(s).strip().lower()
+        s = re.sub(r'\.\d+$', '', s)
+        s = re.sub(r'[-_ ]+[a-z]$', '', s)
+        s = re.sub(r'[^a-z0-9]', '', s)
+        return s
 
-# ---------------- HELPERS ----------------
-def _norm(s: str) -> str:
-    """Normalize IDs so codes from CSV match Excel codes."""
-    s = str(s).strip().lower()
-    s = re.sub(r'\.\d+$', '', s)           # drop trailing ".1"
-    s = re.sub(r'[-_ ]+[a-z]$', '', s)     # drop trailing "-a" / "-b"
-    s = re.sub(r'[^a-z0-9]', '', s)        # keep only a-z0-9
-    return s
+    # ---------------- LOADERS ----------------
+    @st.cache_data(show_spinner=False)
+    def load_sensors(path: Path) -> pd.DataFrame:
+        df = pd.read_excel(path)
+        df.columns = [c.strip().lower() for c in df.columns]
 
-# ---------------- LOADERS ----------------
-@st.cache_data(show_spinner=False)
-def load_sensors(path: Path) -> pd.DataFrame:
-    """
-    Sensors Excel expected columns (case-insensitive):
-      - 'Objectnummer'  (sensor code)
-      - 'Locatienaam'   (human-friendly name)
-      - 'Lat/Long'      (e.g., '52.37, 4.89') or separate 'lat'/'lon'
-    """
-    df = pd.read_excel(path)
-    df.columns = [c.strip().lower() for c in df.columns]
+        code_col = next((c for c in df.columns if "object" in c or "sensor" in c or c == "code"), None)
+        name_col = next((c for c in df.columns if "locatie" in c or "name" in c or "label" in c), None)
+        if code_col is None or name_col is None:
+            raise ValueError("Could not find 'Objectnummer' (code) or 'Locatienaam' in sensors file.")
 
-    code_col = next((c for c in df.columns if "object" in c or "sensor" in c or c == "code"), None)
-    name_col = next((c for c in df.columns if "locatie" in c or "name" in c or "label" in c), None)
-    if code_col is None or name_col is None:
-        raise ValueError("Could not find 'Objectnummer' (code) or 'Locatienaam' in sensors file.")
-
-    if "lat/long" in df.columns:
-        latlon = df["lat/long"].astype(str).str.split(",", n=1, expand=True)
-        df["_lat"] = pd.to_numeric(latlon[0], errors="coerce")
-        df["_lon"] = pd.to_numeric(latlon[1], errors="coerce")
-    else:
-        lat_col = next((c for c in df.columns if "lat" in c), None)
-        lon_col = next((c for c in df.columns if "lon" in c), None)
-        if not lat_col or not lon_col:
-            raise ValueError("Lat/Long columns not found in sensors file.")
-        df["_lat"] = pd.to_numeric(df[lat_col], errors="coerce")
-        df["_lon"] = pd.to_numeric(df[lon_col], errors="coerce")
-
-    out = df[[code_col, name_col, "_lat", "_lon"]].copy()
-    out.columns = ["code", "location_name", "_lat", "_lon"]
-    out = out.dropna(subset=["_lat", "_lon"])
-    out["join_key"] = out["code"].apply(_norm)
-    return out
-
-@st.cache_data(show_spinner=False)
-def load_flow_wide_to_long(path: Path) -> pd.DataFrame:
-    """
-    WIDE flow CSV (each sensor code is a column) -> LONG.
-    Uses 'timestamp' (dd/mm/yyyy) + 'Time' (HH:MM:SS+TZ) to build a proper _t.
-    """
-    # Robust read (auto-detect delimiter)
-    try:
-        df = pd.read_csv(path, sep=None, engine="python")
-    except Exception:
-        df = pd.read_csv(path)
-
-    # --- Build _t from DATE + TIME, stripping timezone like +02:00 ---
-    def find_col(cands):
-        for c in df.columns:
-            if c.strip().lower() in cands:
-                return c
-        return None
-
-    date_col = find_col({"timestamp", "date", "datum"})
-    time_col = find_col({"time", "tijd"})
-
-    if date_col is None or time_col is None:
-        # Fallbacks
-        one_dt_col = find_col({"datetime", "dt", "_t"})
-        if one_dt_col is not None:
-            dt = pd.to_datetime(df[one_dt_col], errors="coerce", dayfirst=True)
+        if "lat/long" in df.columns:
+            latlon = df["lat/long"].astype(str).str.split(",", n=1, expand=True)
+            df["_lat"] = pd.to_numeric(latlon[0], errors="coerce")
+            df["_lon"] = pd.to_numeric(latlon[1], errors="coerce")
         else:
-            dt = pd.date_range("2025-08-20 00:00:00", periods=len(df), freq="3min")
-        df["_t"] = dt
-    else:
-        d = df[date_col].astype(str).str.strip()
-        # strip timezone (e.g. 00:12:00+02:00 -> 00:12:00)
-        t = df[time_col].astype(str).str.strip().str.replace(r"\+.*", "", regex=True)
-        dt = pd.to_datetime(d + " " + t, errors="coerce", dayfirst=True)
-        if pd.api.types.is_datetime64tz_dtype(dt):
-            dt = dt.dt.tz_localize(None)
-        df["_t"] = dt
+            lat_col = next((c for c in df.columns if "lat" in c), None)
+            lon_col = next((c for c in df.columns if "lon" in c), None)
+            if not lat_col or not lon_col:
+                raise ValueError("Lat/Long columns not found in sensors file.")
+            df["_lat"] = pd.to_numeric(df[lat_col], errors="coerce")
+            df["_lon"] = pd.to_numeric(df[lon_col], errors="coerce")
 
-    # Keep only valid timestamps
-    df = df[df["_t"].notna()].copy()
+        out = df[[code_col, name_col, "_lat", "_lon"]].copy()
+        out.columns = ["code", "location_name", "_lat", "_lon"]
+        out = out.dropna(subset=["_lat", "_lon"])
+        out["join_key"] = out["code"].apply(_norm)
+        return out
 
-    # --- Melt WIDE -> LONG ---
-    id_vars = ["_t"]
-    drop_cols = {c for c in [date_col, time_col] if c is not None}
-    value_vars = [c for c in df.columns if c not in id_vars and c not in drop_cols]
 
-    long_df = df.melt(id_vars=id_vars, value_vars=value_vars,
-                      var_name="code", value_name="value")
+    @st.cache_data(show_spinner=False)
+    def load_flow_wide_to_long(path: Path) -> pd.DataFrame:
+        try:
+            df = pd.read_csv(path, sep=None, engine="python")
+        except Exception:
+            df = pd.read_csv(path)
 
-    # --- Numeric cleaning ---
-    long_df["value"] = (
-        long_df["value"].astype(str)
-        .str.replace("\xa0", "", regex=False)  # NBSP
-        .str.replace(" ", "", regex=False)
-        .str.replace(",", ".", regex=False)    # decimal comma -> dot
-    )
-    long_df["value"] = pd.to_numeric(long_df["value"], errors="coerce").fillna(0)
+        def find_col(cands):
+            for c in df.columns:
+                if c.strip().lower() in cands:
+                    return c
+            return None
 
-    # --- Join key like sensors ---
-    long_df["join_key"] = long_df["code"].apply(_norm)
+        date_col = find_col({"timestamp", "date", "datum"})
+        time_col = find_col({"time", "tijd"})
 
-    return long_df
+        if date_col is None or time_col is None:
+            one_dt_col = find_col({"datetime", "dt", "_t"})
+            if one_dt_col is not None:
+                dt = pd.to_datetime(df[one_dt_col], errors="coerce", dayfirst=True)
+            else:
+                dt = pd.date_range("2025-08-20 00:00:00", periods=len(df), freq="3min")
+            df["_t"] = dt
+        else:
+            d = df[date_col].astype(str).str.strip()
+            t = df[time_col].astype(str).str.strip().str.replace(r"\+.*", "", regex=True)
+            dt = pd.to_datetime(d + " " + t, errors="coerce", dayfirst=True)
+            if pd.api.types.is_datetime64tz_dtype(dt):
+                dt = dt.dt.tz_localize(None)
+            df["_t"] = dt
 
-# -------- helper for Time-lapse heatmap (global scaling like Map page) -------
-@st.cache_data(show_spinner=False)
-def build_heatmap_frames_global(flow_long: pd.DataFrame, sensors: pd.DataFrame, times):
-    """
-    Build HeatMapWithTime frames using a global reference so colors match the static map:
-    small values -> blue, larger -> green/yellow/orange/red.
-    """
-    frames_raw = []
-    all_vals = []
+        df = df[df["_t"].notna()].copy()
+        id_vars = ["_t"]
+        drop_cols = {c for c in [date_col, time_col] if c is not None}
+        value_vars = [c for c in df.columns if c not in id_vars and c not in drop_cols]
+        long_df = df.melt(id_vars=id_vars, value_vars=value_vars, var_name="code", value_name="value")
 
-    for t in times:
-        dt = flow_long.loc[flow_long["_t"] == pd.Timestamp(t), ["join_key", "value"]]
-        if dt.empty:
-            frames_raw.append([])
-            continue
-
-        per_sensor = (
-            dt.groupby("join_key", as_index=False)["value"].sum()
-              .merge(sensors[["join_key", "_lat", "_lon"]], on="join_key", how="left")
-              .dropna(subset=["_lat", "_lon"])
+        long_df["value"] = (
+            long_df["value"].astype(str)
+            .str.replace("\xa0", "", regex=False)
+            .str.replace(" ", "", regex=False)
+            .str.replace(",", ".", regex=False)
         )
+        long_df["value"] = pd.to_numeric(long_df["value"], errors="coerce").fillna(0)
+        long_df["join_key"] = long_df["code"].apply(_norm)
+        return long_df
 
-        pts = [[float(r["_lat"]), float(r["_lon"]), float(r["value"])]
-               for _, r in per_sensor.iterrows() if r["value"] > 0]
-        frames_raw.append(pts)
-        all_vals.extend([p[2] for p in pts])
 
-    if len(all_vals) == 0:
-        return frames_raw
+    # ============================================================
+    # LATEST NONZERO DATETIME
+    # ============================================================
+    def latest_nonzero_dt(long_df: pd.DataFrame) -> datetime:
+        if long_df.empty or "_t" not in long_df.columns:
+            return datetime.now()
 
-    ref = float(np.percentile(all_vals, 99))  # robust global max
-    ref = max(ref, 1.0)
+        ts = long_df["_t"]
+        if pd.api.types.is_datetime64tz_dtype(ts):
+            ts = ts.dt.tz_localize(None)
 
-    frames = []
-    for pts in frames_raw:
-        frames.append([[lat, lon, val / ref] for (lat, lon, val) in pts])
+        totals = long_df.groupby(ts, as_index=False)["value"].sum()
+        nz = totals.loc[totals["value"] > 0]
+        if not nz.empty:
+            return pd.Timestamp(nz.iloc[-1][ts.name]).to_pydatetime()
+        return pd.Timestamp(long_df["_t"].min()).to_pydatetime()
 
-    return frames
+    # ============================================================
+    # MAP CREATION + HELPERS
+    # ============================================================
+    def make_base_map(sensors_df: pd.DataFrame) -> folium.Map:
+        center = [sensors_df["_lat"].mean(), sensors_df["_lon"].mean()] if not sensors_df.empty else CITY_CENTER
+        return folium.Map(location=center, zoom_start=13, tiles="cartodbpositron")
 
-# ---------------- LATEST NONZERO DATETIME ----------------
-def latest_nonzero_dt(long_df: pd.DataFrame) -> datetime:
-    """
-    Return the most recent timestamp where total flow across all sensors > 0.
-    If none exist, fall back to the earliest timestamp in the dataset.
-    """
-    if long_df.empty or "_t" not in long_df.columns:
-        return datetime.now()
+    def _bubble_color(count: float) -> str:
+        if count >= 200: return "#E74C3C"
+        if count >= 80: return "#F1C40F"
+        if count > 0: return "#7DCEA0"
+        return "#95A5A6"
 
-    ts = long_df["_t"]
-    # make sure it's timezone-naive
-    if pd.api.types.is_datetime64tz_dtype(ts):
-        ts = ts.dt.tz_localize(None)
+    def add_heatmap(m: folium.Map, df: pd.DataFrame, radius_px: int) -> None:
+        pts = [[float(r["_lat"]), float(r["_lon"]), float(r["count"])] for _, r in df.iterrows() if r["count"] > 0]
+        if pts:
+            HeatMap(pts, radius=radius_px, blur=int(radius_px * 0.6), max_zoom=16).add_to(m)
 
-    # sum by timestamp to find frames that actually have people
-    totals = long_df.groupby(ts, as_index=False)["value"].sum()
-    nz = totals.loc[totals["value"] > 0]
+    # ============================================================
+    # MAIN UI (all your existing Streamlit code)
+    # ============================================================
+    st.title("🌊 SAIL Sensors — Per-Sensor Counts & Heatmap")
 
-    if not nz.empty:
-        # most recent non-zero timestamp
-        return pd.Timestamp(nz.iloc[-1][ts.name]).to_pydatetime()
+    with st.sidebar:
+        st.header("📁 Files")
+        st.text(f"Sensors: {SENSORS_XLSX.name}")
+        st.text(f"Flow: {FLOW_CSV.name}")
+        viz_mode = st.radio("Visualization", ["Bubbles", "Heatmap", "Both"], index=0)
+        heat_radius_px = st.slider("Heatmap radius (px)", 10, 100, 48, 2)
+        window_minutes = st.slider("± minutes around time (smoothing)", 0, 60, DEFAULT_WINDOW_MIN, 1)
+        st.markdown("---")
+        page_choice = st.radio("Page", ["🗺️ Map", "📈 Sensor Details", "▶️ Time-lapse"], index=0)
 
-    # fallback: earliest timestamp in the data
-    return pd.Timestamp(long_df["_t"].min()).to_pydatetime()
-
-# ---------------- MAP ----------------
-def make_base_map(sensors_df: pd.DataFrame) -> folium.Map:
-    center = [sensors_df["_lat"].mean(), sensors_df["_lon"].mean()] if not sensors_df.empty else CITY_CENTER
-    return folium.Map(location=center, zoom_start=13, tiles="cartodbpositron")
-
-def _bubble_color(count: float) -> str:
-    if count >= 200: return "#E74C3C"  # red
-    if count >=  80: return "#F1C40F"  # amber
-    if count >    0: return "#7DCEA0"  # green
-    return "#95A5A6"                   # gray
-
-def add_bubbles(m: folium.Map, df: pd.DataFrame, selected_dt: datetime, window_minutes: int) -> None:
-    if df.empty:
-        return
-    low, high = int(df["count"].min()), int(df["count"].max())
-    for _, r in df.iterrows():
-        count = int(r["count"])
-        color = _bubble_color(count)
-        radius = 14 if high == low else int(14 + 28 * (count - low) / max(1, (high - low)))
-        html = f"""
-        <div style="
-            width:{radius*2}px;height:{radius*2}px;border-radius:50%;
-            background:{color};opacity:0.92;border:4px solid rgba(255,255,255,0.95);
-            display:flex;align-items:center;justify-content:center;
-            font-weight:700;color:#1B2631;
-            font-size:{max(0.6, min(1.4, radius/20))}rem;
-            box-shadow:0 2px 8px rgba(0,0,0,0.25);">
-            {count}
-        </div>
-        """
-        folium.Marker(
-            location=[float(r["_lat"]), float(r["_lon"])],
-            icon=folium.DivIcon(html=html),  # styled bubble
-            tooltip=(
-                f"{r['location_name']}<br>"
-                f"<b>Count:</b> {count}<br>"
-                f"<b>Time:</b> {selected_dt:%Y-%m-%d %H:%M} (±{window_minutes}m)"
-            ),
-            popup=folium.Popup(str(r["location_name"]), max_width=180),
-        ).add_to(m)
-
-def add_heatmap(m: folium.Map, df: pd.DataFrame, radius_px: int) -> None:
-    pts = [[float(r["_lat"]), float(r["_lon"]), float(r["count"])] for _, r in df.iterrows() if r["count"] > 0]
-    if pts:
-        HeatMap(pts, radius=radius_px, blur=int(radius_px*0.6), max_zoom=16).add_to(m)
-
-# ---------------- UI ----------------
-st.title("🌊 SAIL Sensors — Per-Sensor Counts & Heatmap")
-
-with st.sidebar:
-    st.header("📁 Files")
-    st.text(f"Sensors: {SENSORS_XLSX.name}")
-    st.text(f"Flow: {FLOW_CSV.name}")
-    viz_mode       = st.radio("Visualization", ["Bubbles", "Heatmap", "Both"], index=0)
-    heat_radius_px = st.slider("Heatmap radius (px)", 10, 100, 48, 2)
-    window_minutes = st.slider("± minutes around time (smoothing)", 0, 60, DEFAULT_WINDOW_MIN, 1)
-
-    st.markdown("---")
-    page_choice = st.radio(
-        "Page",
-        ["🗺️ Map", "📈 Sensor Details", "▶️ Time-lapse"],
-        index={"map":0, "details":1, "timelapse":2}.get(st.session_state.page, 0)
+    st.session_state.page = (
+        "map" if page_choice.startswith("🗺️")
+        else "details" if page_choice.startswith("📈")
+        else "timelapse"
     )
 
-st.session_state.page = (
-    "map" if page_choice.startswith("🗺️")
-    else "details" if page_choice.startswith("📈")
-    else "timelapse"
-)
-
-# Load data
-try:
-    sensors   = load_sensors(SENSORS_XLSX)
-    flow_long = load_flow_wide_to_long(FLOW_CSV)
-except Exception as e:
-    st.error(f"Could not load data: {e}")
-    st.stop()
+    # ---------------- LOAD DATA ----------------
+    try:
+        sensors = load_sensors(SENSORS_XLSX)
+        flow_long = load_flow_wide_to_long(FLOW_CSV)
+    except Exception as e:
+        st.error(f"Could not load data: {e}")
+        st.stop()
 
 # ---- Date picker ----
 dates = sorted(flow_long["_t"].dt.date.unique())
