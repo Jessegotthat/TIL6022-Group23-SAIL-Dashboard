@@ -272,9 +272,12 @@ def run():
     FLOW_CSV     = BASE_DIR / "SAIL2025_LVMA_data_3min_20August-25August2025_flow.csv"
     DEFAULT_WINDOW_MIN = 15
 
-    # ---------------- SIMPLE PAGE ROUTER ----------------
-    if "page" not in st.session_state:
-        st.session_state.page = "map"
+    # ---- Session defaults (prevents AttributeError) ----
+    ss = st.session_state
+    ss.setdefault("page", "map")
+    ss.setdefault("use_whole_event", False)
+    ss.setdefault("clicked_location", None)
+
 
     # ---------------- UI: Header + Sidebar ----------------
     st.title("🌊 SAIL Sensors — Per-Sensor Counts & Heatmap")
@@ -718,11 +721,11 @@ def run():
                 )
 
 # ---- KPIs (Map page) ----
-if st.session_state.page == "map":
+if ss.get("page") == "map":
     total_people      = int(bubbles_df["count"].sum())
     sensors_plotted   = int(len(sensors))
     sensors_with_data = int((bubbles_df["count"] > 0).sum())
-    
+
 k1, k2, k3 = st.columns(3)
 k1.metric("📍 Sensors plotted", f"{len(sensors)}")
 k2.metric("📊 Sensors w/ data", f"{sensors_with_data}")
