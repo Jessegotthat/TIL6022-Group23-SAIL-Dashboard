@@ -178,6 +178,33 @@ def build_heatmap_frames_global(flow_long: pd.DataFrame, sensors: pd.DataFrame, 
 
     return frames
 
+# ---------------- LATEST NONZERO DATETIME ----------------
+from datetime import datetime  # you likely already have this; harmless if duplicated
+
+def latest_nonzero_dt(long_df: pd.DataFrame) -> datetime:
+    """
+    Return the most recent timestamp where total flow across all sensors > 0.
+    If none exist, fall back to the earliest timestamp in the dataset.
+    """
+    if long_df.empty or "_t" not in long_df.columns:
+        return datetime.now()
+
+    ts = long_df["_t"]
+    # make sure it's timezone-naive
+    if pd.api.types.is_datetime64tz_dtype(ts):
+        ts = ts.dt.tz_localize(None)
+
+    # sum by timestamp to find frames that actually have people
+    totals = long_df.groupby(ts, as_index=False)["value"].sum()
+    nz = totals.loc[totals["value"] > 0]
+
+    if not nz.empty:
+        # most recent non-zero timestamp
+        return pd.Timestamp(nz.iloc[-1][ts.name]).to_pydatetime()
+
+    # fallback: earliest timestamp in the data
+    return pd.Timestamp(long_df["_t"].min()).to_pydatetime()
+
 # ---------------- MAP ----------------
 def make_base_map(sensors_df: pd.DataFrame) -> folium.Map:
     center = [sensors_df["_lat"].mean(), sensors_df["_lon"].mean()] if not sensors_df.empty else CITY_CENTER
