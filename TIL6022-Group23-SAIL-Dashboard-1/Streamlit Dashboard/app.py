@@ -717,9 +717,12 @@ def run():
                     f"(points: {len(detail_agg):,})"
                 )
 
-# ---- KPIs ----
-total_people      = int(bubbles_df["count"].sum())
-sensors_with_data = int((bubbles_df["count"] > 0).sum())
+# ---- KPIs (Map page) ----
+if st.session_state.page == "map":
+    total_people      = int(bubbles_df["count"].sum())
+    sensors_plotted   = int(len(sensors))
+    sensors_with_data = int((bubbles_df["count"] > 0).sum())
+    
 k1, k2, k3 = st.columns(3)
 k1.metric("📍 Sensors plotted", f"{len(sensors)}")
 k2.metric("📊 Sensors w/ data", f"{sensors_with_data}")
