@@ -732,7 +732,3 @@ def run():
 
 if __name__ == "__main__":
     run()
-
-if not st.session_state.get("_sail_app_ran", False):
-    st.session_state["_sail_app_ran"] = True
-    run()
