@@ -278,7 +278,6 @@ def run():
     ss.setdefault("use_whole_event", False)
     ss.setdefault("clicked_location", None)
 
-
     # ---------------- UI: Header + Sidebar ----------------
     st.title("🌊 SAIL Sensors — Per-Sensor Counts & Heatmap")
 
@@ -293,10 +292,10 @@ def run():
         page_choice = st.radio(
             "Page",
             ["🗺️ Map", "📈 Sensor Details", "▶️ Time-lapse"],
-            index={"map":0, "details":1, "timelapse":2}.get(st.session_state.page, 0)
+            index={"map":0, "details":1, "timelapse":2}.get(ss.page, 0)
         )
 
-    st.session_state.page = (
+    ss.page = (
         "map" if page_choice.startswith("🗺️")
         else "details" if page_choice.startswith("📈")
         else "timelapse"
@@ -334,7 +333,7 @@ def run():
             value=False,
             help="Use all data from all days instead of a single date."
         )
-        st.session_state["use_whole_event"] = use_whole_event
+        ss["use_whole_event"] = use_whole_event
 
     # ---- Time slider & derived range ----
     if use_whole_event:
@@ -401,12 +400,23 @@ def run():
     bubbles_df = sensors.merge(flow_agg, on="join_key", how="left")
     bubbles_df["count"] = bubbles_df["value_sum"].fillna(0).astype(int)
 
+    # ---- KPIs (Map page) ----
+    if ss.get("page") == "map":
+        total_people      = int(bubbles_df["count"].sum())
+        sensors_plotted   = int(len(sensors))
+        sensors_with_data = int((bubbles_df["count"] > 0).sum())
+
+        k1, k2, k3 = st.columns(3)
+        k1.metric("📍 Sensors plotted",       f"{sensors_plotted:,}")
+        k2.metric("📊 Sensors w/ data",       f"{sensors_with_data:,}")
+        k3.metric("👥 Total people (window)", f"{total_people:,}")
+
     # ===================== SENSOR DETAILS PAGE ======================
-    if st.session_state.page == "details":
+    if ss.page == "details":
         st.header("📈 Sensor Details")
         st.subheader("Trend by Location")
 
-        use_whole_event = st.session_state.get("use_whole_event", False)
+        use_whole_event = ss.get("use_whole_event", False)
 
         if "location_name" not in sensors.columns:
             st.error("Column 'location_name' not found in sensors dataframe.")
@@ -497,7 +507,7 @@ def run():
         st.stop()  # stop before map for this page
 
     # ===================== TIME-LAPSE PAGE ======================
-    if st.session_state.page == "timelapse":
+    if ss.page == "timelapse":
         from folium.plugins import HeatMapWithTime, TimestampedGeoJson
 
         st.header("▶️ Time-lapse — People pattern over time (Folium)")
@@ -617,20 +627,20 @@ def run():
                     clicked_name = pop.get("content")
                 elif isinstance(pop, str):
                     clicked_name = pop
-            if clicked_name and st.session_state.get("clicked_location") != clicked_name:
-                st.session_state["clicked_location"] = clicked_name
+            if clicked_name and ss.get("clicked_location") != clicked_name:
+                ss["clicked_location"] = clicked_name
                 st.rerun()
         else:
             st.components.v1.html(m.get_root().render(), height=650)
 
     with right_col:
         st.subheader("Trend by Location")
-        use_whole_event = st.session_state.get("use_whole_event", False)
+        use_whole_event = ss.get("use_whole_event", False)
         locations = sensors["location_name"].dropna().sort_values().unique().tolist()
         if not locations:
             st.warning("No locations available in sensors metadata.")
         else:
-            clicked_loc = st.session_state.get("clicked_location")
+            clicked_loc = ss.get("clicked_location")
             if clicked_loc in locations:
                 location = clicked_loc
                 st.caption(f"📍 Selected from map: **{location}**")
@@ -719,17 +729,6 @@ def run():
                     f"{location} • range {_start:%Y-%m-%d %H:%M} → {_end:%H:%M} "
                     f"(points: {len(detail_agg):,})"
                 )
-
-# ---- KPIs (Map page) ----
-if ss.get("page") == "map":
-    total_people      = int(bubbles_df["count"].sum())
-    sensors_plotted   = int(len(sensors))
-    sensors_with_data = int((bubbles_df["count"] > 0).sum())
-
-k1, k2, k3 = st.columns(3)
-k1.metric("📍 Sensors plotted", f"{len(sensors)}")
-k2.metric("📊 Sensors w/ data", f"{sensors_with_data}")
-k3.metric("👥 Total people (window)", f"{total_people}")
 
 if __name__ == "__main__":
     run()
