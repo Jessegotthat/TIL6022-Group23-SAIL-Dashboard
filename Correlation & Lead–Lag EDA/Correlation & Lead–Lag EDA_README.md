@@ -3,8 +3,6 @@
 Exploratory data analysis (EDA) to understand how **road traffic** (TomTom) and **vessel activity** relate to **pedestrian flow** during SAIL 2025.  
 The script parses raw inputs, builds aggregated **driver features** at a common cadence (default **3-minute**), computes **Pearson correlations** and **lead–lag profiles**, and exports summary tables and plots to `outputs/`.
 
-> **Note (中文):** 这是该脚本的 README。脚本会读取行人流量、TomTom道路交通与船舶定位数据，统一到 3 分钟频率，生成若干驱动特征，并计算与人流的相关与超前-滞后关系，同时输出表格与图像。
-
 ---
 
 ## 1) What this script does
@@ -61,4 +59,5 @@ jupyter notebook EDA.ipynb
 or
 ```bash
 jupyter lab EDA.ipynb
+
 ```
