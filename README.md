@@ -53,15 +53,17 @@ Save it directly into the same folder as above (main_streamlit/).
 4) Environment & dependencies
 Python version: 3.10–3.11 recommended
 
-Install packages:
-# (optional but recommended) create and activate a virtual environment
+- Install packages:
+(optional but recommended) create and activate a virtual environment
 python -m venv .venv
-# Windows
+
+- Windows
 .venv\Scripts\activate
-# macOS/Linux
+
+- macOS/Linux
 source .venv/bin/activate
 
-# install dependencies
+- install dependencies
 pip install --upgrade pip
 pip install streamlit pandas numpy plotly openpyxl pyarrow
 
